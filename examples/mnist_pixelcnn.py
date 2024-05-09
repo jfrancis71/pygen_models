@@ -4,7 +4,7 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
-import pygen.distributions.pixelcnn as pixelcnn
+import pygen_models.distributions.pixelcnn as pixelcnn
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST PixelCNN')

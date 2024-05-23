@@ -1,5 +1,5 @@
 import torch
-import torch.nn as nn
+from torch import nn
 import pixelcnn_pp.model as pixelcnn_model
 import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen.layers.independent_quantized_distribution as ql
@@ -18,6 +18,7 @@ class _PixelCNN(nn.Module):
         self.params = params
 
     def log_prob(self, samples):
+        # pylint: disable=E1101
         if samples.size()[1:4] != torch.Size(self.event_shape):
             raise RuntimeError("sample shape {}, but event_shape has shape {}"
                 .format(samples.shape[1:4], self.event_shape))
@@ -32,16 +33,18 @@ class _PixelCNN(nn.Module):
         else:
             batch_shape = sample_shape
         with torch.no_grad():
-            sample = torch.zeros(batch_shape+self.event_shape, device=next(self.parameters()).device)
+            # pylint: disable=E1101
+            sample = torch.zeros(batch_shape+self.event_shape,
+                device=next(self.parameters()).device)
             for y in range(self.event_shape[1]):
                 for x in range(self.event_shape[2]):
-                    logits = self.pixelcnn_net((sample*2)-1, sample=True, conditional=self.params)[:, :, y, x]
+                    logits = self.pixelcnn_net((sample*2)-1, sample=True,
+                        conditional=self.params)[:, :, y, x]
                     pixel_sample = self.layer(logits).sample()
                     sample[:, :, y, x] = pixel_sample
         if sample_shape is None:
             return sample[0]
-        else:
-            return sample
+        return sample
 
 
 class PixelCNNBernoulliDistribution(_PixelCNN):
@@ -49,7 +52,8 @@ class PixelCNNBernoulliDistribution(_PixelCNN):
         super().__init__(event_shape,
                          bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1]), None)
         self.pixelcnn_net = pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                            input_channels=self.event_shape[0], nr_params=self.layer.params_size(), nr_conditional=None)
+                            input_channels=self.event_shape[0],
+                            nr_params=self.layer.params_size(), nr_conditional=None)
 
 
 class PixelCNNQuantizedDistribution(_PixelCNN):
@@ -57,4 +61,5 @@ class PixelCNNQuantizedDistribution(_PixelCNN):
         super().__init__(event_shape,
                          ql.IndependentQuantizedDistribution(event_shape=event_shape[:1]), None)
         self.pixelcnn_net = pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                            input_channels=self.event_shape[0], nr_params=self.layer.params_size(), nr_conditional=None)
+                            input_channels=self.event_shape[0],
+                            nr_params=self.layer.params_size(), nr_conditional=None)

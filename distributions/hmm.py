@@ -35,7 +35,7 @@ class HMM(nn.Module):
         state_sequence = [state]
         observation = self.observation_model.state_emission_distribution(state).sample()
         observation_sequence = [observation]
-        for step in range(num_steps):
+        for _ in range(num_steps):
             state = Categorical(logits=self.state_transitions_matrix[state]).sample()
             observation = self.observation_model.state_emission_distribution(state).sample()
             state_sequence.append(state)
@@ -48,6 +48,10 @@ class HMM(nn.Module):
 
     def state_transition_distribution(self):
         return Categorical(logits=self.state_transitions_matrix)
+
+    # pylint: disable=C0116
+    def forward(self, _):
+        raise NotImplementedError("No forward method.")
 
 
 class MatrixObservationModel(nn.Module):
@@ -68,3 +72,7 @@ class MatrixObservationModel(nn.Module):
 
     def state_emission_distribution(self, state):
         return Categorical(logits=self.emission_logits_matrix[state])
+
+    # pylint: disable=C0116
+    def forward(self, _):
+        raise NotImplementedError("No forward method.")

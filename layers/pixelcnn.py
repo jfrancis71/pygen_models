@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import pixelcnn_pp.model as pixelcnn_model
 import pygen.layers.independent_bernoulli as bernoulli_layer
@@ -9,11 +10,15 @@ class _PixelCNNDistribution(nn.Module):
     def __init__(self, event_shape, layer, num_conditional, nr_resnet=3):
         super().__init__()
         self.event_shape = event_shape
+        self.num_conditional = num_conditional
         self.layer = layer
         self.pixelcnn_net = pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
                             input_channels=event_shape[0], nr_params=self.layer.params_size(), nr_conditional=num_conditional)
 
     def forward(self, x):
+        if x.shape[1:4] != torch.Size([self.num_conditional, self.event_shape[1], self.event_shape[2]]):
+            raise RuntimeError("input shape {}, but event_shape has shape {} with num_conditional {}, expecting {}".
+                format(x.shape, self.event_shape, self.num_conditional, ["_", self.num_conditional, self.event_shape[1], self.event_shape[2]]))
         pixelcnn = pixelcnn_dist._PixelCNN(
             self.event_shape,
             self.layer,
@@ -24,9 +29,9 @@ class _PixelCNNDistribution(nn.Module):
 
 class PixelCNNBernoulliDistribution(_PixelCNNDistribution):
     def __init__(self, event_shape, num_conditional, nr_resnet=3):
-        super().__init__(event_shape, bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1]), num_conditional, nr_resnet=3)
+        super().__init__(event_shape, bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1]), num_conditional, nr_resnet=nr_resnet)
 
 
 class PixelCNNQuantizedDistribution(_PixelCNNDistribution):
     def __init__(self, event_shape, num_conditional, nr_resnet=3):
-        super().__init__(event_shape, ql.IndependentQuantizedDistribution(event_shape=event_shape[:1]), num_conditional, nr_resnet=3)
+        super().__init__(event_shape, ql.IndependentQuantizedDistribution(event_shape=event_shape[:1]), num_conditional, nr_resnet=nr_resnet)

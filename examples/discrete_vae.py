@@ -37,55 +37,51 @@ class VAE(nn.Module):
         self.num_z_samples = num_z_samples
         self.mode = mode
 
-    def kl_div(self, log_encoder):
+    def kl_div(self, encoder_dist):
         p = Categorical(logits=torch.zeros([10], device=next(self.parameters()).device))
-        q = Categorical(logits=log_encoder)
-        kl_div = torch.sum(q.probs * (q.logits - p.logits), axis=1)
+        kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - p.logits), axis=1)
         return kl_div
 
-    def reg(self, log_encoder):
-        q = Categorical(logits=log_encoder).logits
-        reg = -torch.sum(q, axis=1)
+    def reg(self, encoder_dist):
+        reg = -torch.sum(encoder_dist.logits, axis=1)
         return reg
 
-    def sample_reconstruct_log_prob_analytic(self, log_encoder, x):
+    def sample_reconstruct_log_prob_analytic(self, encoder_dist, x):
         device = next(self.parameters()).device
         batch_size = x.shape[0]
         log_prob1 = torch.stack([self.decoder(
             nn.functional.one_hot(
                 torch.tensor(z).to(device), 10).unsqueeze(0).repeat(batch_size, 1).to(device).float()).log_prob(x)
             for z in range(10)], dim=1)
-        soft = torch.softmax(log_encoder, dim=1)
-        arr = soft * log_prob1
+        arr = encoder_dist.probs * log_prob1
         log_prob = torch.sum(arr, axis=1)
         return log_prob
 
-    def sample_reconstruct_log_prob_reinforce(self, log_encoder, x):  # Classic REINFORCE
-        z = torch.distributions.categorical.Categorical(logits=log_encoder).sample()
+    def sample_reconstruct_log_prob_reinforce(self, encoder_dist, x):  # Classic REINFORCE
+        z = encoder_dist.sample()
         encode = torch.nn.functional.one_hot(z, 10).float()
         decode = self.decoder(encode)
         log_prob = decode.log_prob(x)
-        reinforce = log_encoder[torch.arange(log_encoder.size(0)), z] * log_prob.detach()
+        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * log_prob.detach()
         return log_prob + reinforce - reinforce.detach()
 
-    def sample_reconstruct_log_prob_uniform(self, log_encoder, x):  # Using uniform sampling
+    def sample_reconstruct_log_prob_uniform(self, encoder_dist, x):  # Using uniform sampling
         device = next(self.parameters()).device
         batch_size = x.shape[0]
         z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, 10]).to(device)).sample()
-        probs = torch.softmax(log_encoder, dim=1)
         encode = torch.nn.functional.one_hot(z, 10).float()
         decode = self.decoder(encode)
         log_prob = decode.log_prob(x)
-        reinforce = 10.0 * probs[torch.arange(log_encoder.size(0)), z] * log_prob
+        reinforce = 10.0 * encoder_dist.probs[torch.arange(encoder_dist.probs.size(0)), z] * log_prob
         return reinforce
 
-    def sample_reconstruct_log_prob(self, log_encoder, x):
+    def sample_reconstruct_log_prob(self, encoder_dist, x):
         if self.mode == "analytic":
-            return self.sample_reconstruct_log_prob_analytic(log_encoder, x)
+            return self.sample_reconstruct_log_prob_analytic(encoder_dist, x)
         elif self.mode == "uniform":
-            return self.sample_reconstruct_log_prob_uniform(log_encoder, x)
+            return self.sample_reconstruct_log_prob_uniform(encoder_dist, x)
         elif self.mode == "reinforce":
-            return self.sample_reconstruct_log_prob_reinforce(log_encoder, x)
+            return self.sample_reconstruct_log_prob_reinforce(encoder_dist, x)
         else:
             raise RuntimeError("Unknown reconstruct mode: ", self.mode)
 
@@ -93,11 +89,11 @@ class VAE(nn.Module):
         return self.elbo(x)[0]
 
     def elbo(self, x):
-        log_encoder = self.encoder(x)
-        log_probs = [self.sample_reconstruct_log_prob(log_encoder, x) for _ in range(self.num_z_samples)]
+        encoder_dist = self.encoder(x)
+        log_probs = [self.sample_reconstruct_log_prob(encoder_dist, x) for _ in range(self.num_z_samples)]
         log_prob = torch.mean(torch.stack(log_probs), dim=0)
-        kl_div = self.kl_div(log_encoder)
-        reg = self.reg(log_encoder)
+        kl_div = self.kl_div(encoder_dist)
+        reg = self.reg(encoder_dist)
         self.loss = reg
         return log_prob - kl_div, log_prob.detach(), kl_div.detach()
 

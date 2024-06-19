@@ -13,7 +13,6 @@ class HMM(nn.Module):
         self.observation_model = observation_model
 
     def log_prob(self, value):
-        sample_shape = value.shape[:-1]
         # Below assumes it is of length 1 or more
         alpha = self.observation_model.emission_logits(value[:, 0]) +\
             self.prior_state_distribution().logits
@@ -21,7 +20,7 @@ class HMM(nn.Module):
             # pylint: disable=E1101
             alpha = self.observation_model.emission_logits(value[:, observation_idx]) + \
                 torch.logsumexp(
-                    torch.transpose(self.state_transition_distribution().logits, 0, 1) + \
+                    torch.transpose(self.state_transition_distribution().logits, 0, 1) +
                     alpha.unsqueeze(1), dim=2)
         return torch.logsumexp(alpha, dim=1)  # pylint: disable=E1101
 
@@ -35,13 +34,15 @@ class HMM(nn.Module):
         state_sequence = [state]
         observation = self.observation_model.state_emission_distribution(state).sample()
         observation_sequence = [observation]
-        for _ in range(num_steps):
+        for _ in range(num_steps-1):
             state = Categorical(logits=self.state_transitions_matrix[state]).sample()
             observation = self.observation_model.state_emission_distribution(state).sample()
             state_sequence.append(state)
             observation_sequence.append(observation)
+        state_sequence = torch.stack(state_sequence, dim=0)
+        observation_sequence = torch.stack(observation_sequence, dim=0)
         # pylint: disable=E1101
-        return torch.tensor(state_sequence)[:-1], torch.tensor(observation_sequence)[:-1]
+        return state_sequence, observation_sequence
 
     def prior_state_distribution(self):
         return Categorical(logits=self.prior_states_vector)
@@ -49,9 +50,8 @@ class HMM(nn.Module):
     def state_transition_distribution(self):
         return Categorical(logits=self.state_transitions_matrix)
 
-    # pylint: disable=C0116
-    def forward(self, _):
-        raise NotImplementedError("No forward method.")
+    def forward(self, z):
+        return self.observation_model.state_emission_distribution(z)
 
 
 class MatrixObservationModel(nn.Module):

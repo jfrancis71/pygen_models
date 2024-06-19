@@ -34,7 +34,7 @@ dataset = torchvision.datasets.MNIST(ns.datasets_folder, train=True, download=Tr
 train_dataset, validation_dataset = random_split(dataset, [50000, 10000])
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callback = callbacks.callback_compose([
-    callbacks.TBConditionalImagesCallback(tb_writer, "conditional_generated_images"),
+    callbacks.TBConditionalImagesCallback(tb_writer, "conditional_generated_images", num_labels=10),
     callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
     callbacks.TBDatasetLogProbLayerCallback(tb_writer, "validation_log_prob", validation_dataset, reverse_inputs=True)])
 

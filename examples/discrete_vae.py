@@ -172,7 +172,7 @@ digit_distribution = VAE(ns.sample_mode, ns.num_z_samples).to(ns.device)
 tb_writer = SummaryWriter(ns.tb_folder)
 
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images"),
+    callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=10),
     callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
     callbacks.TBDatasetLogProbDistributionCallback(tb_writer, "validation_log_prob", validation_dataset),
     TBDatasetVAECallback(tb_writer, "validation", validation_dataset)

@@ -25,9 +25,7 @@ class Decoder(nn.Module):
 
     def forward(self, x):
         x = self.linear(x)
-#        x = y.reshape([-1, 1, 28, 28])
         return self.distribution_layer(x)
-#        return x
 
 
 class VAE(nn.Module):
@@ -68,8 +66,6 @@ class VAE(nn.Module):
         decode = self.decoder(encode)
         log_prob = decode.log_prob(x)
         reinforce = log_encoder[torch.arange(log_encoder.size(0)), z] * log_prob.detach()
-#        probs = torch.softmax(log_encoder, dim=1).detach()
-#        reconstruct = probs[torch.arange(log_encoder.size(0)), z] * log_prob
         return log_prob + reinforce - reinforce.detach()
 
     def sample_reconstruct_log_prob_uniform(self, log_encoder, x):  # Using uniform sampling

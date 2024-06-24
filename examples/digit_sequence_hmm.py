@@ -10,11 +10,15 @@ import torchvision
 import pygen.train.callbacks as callbacks
 from pygen.train import train
 import pygen_models.distributions.hmm as hmm
+import pygen.layers.independent_bernoulli as bernoulli_layer
+import pygen_models.distributions.pixelcnn as pixelcnn_dist
+import torch.nn.functional as F
 
 
 class MNISTSequenceDataset(Dataset):
     def __init__(self, mnist_dataset):
         mnist_dataset_len = len(mnist_dataset)
+#        mnist_dataset_len = 100
         mnist_digits = torch.stack([mnist_dataset[n][0] for n in range(mnist_dataset_len)]).float()
         mnist_labels = torch.tensor([mnist_dataset[n][1] for n in range(mnist_dataset_len)])
         self.digits = [mnist_digits[mnist_labels == d] for d in range(10)]
@@ -33,14 +37,47 @@ class MNISTSequenceDataset(Dataset):
         return (torch.stack(i1),)
 
 
+class MaskedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, stride, padding):
+        super().__init__()
+        self.stride = stride
+        self.padding = padding
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.mask = nn.Parameter(torch.ones([out_channels, in_channels, 3, 3]).float(), requires_grad=False)
+        self.mask[:, :, 2, 2] = 0.0
+        self.mask[:, :, 1, 1:] = 0.0
+        self.mask[:, :, 2] = 0.0
+
+    def forward(self, x):
+        weight = self.conv.weight * self.mask.detach()
+        return nn.functional.conv2d(x, weight, bias=self.conv.bias, stride=self.stride, padding=self.padding)
+
+
+class SimplePixelCNNNetwork(nn.Module):
+    def __init__(self, num_conditional):
+        super().__init__()
+        self.conv1 = MaskedConv2d(1, 32, 1, 1)
+        self.prj1 = nn.Linear(num_conditional, 32*28*28)
+        self.conv2 = MaskedConv2d(32, 1, 1, 1)
+
+    def forward(self, x, sample=False, conditional=None):
+        x = self.conv1(x)
+        prj = self.prj1(conditional[:,:,0,0]).reshape([-1, 32, 28, 28])
+        x = x + prj
+        x = F.relu(x)
+        x = self.conv2(x)
+        return x
+
+
 class ImageObservationModel(nn.Module):
     def __init__(self, num_states, event_shape, device):
         super().__init__()
         # pylint: disable=E1101
         self.num_states = num_states
         self.device = device
-        self.logits = nn.Parameter(torch.randn([self.num_states, 1, 28, 28], device=self.device))
         self.event_shape = event_shape
+        self.pixelcnn_net = SimplePixelCNNNetwork(self.num_states)
+        self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
 
     def emission_logits(self, observation):  # Batch + event_shape
         """returns vector of length num_states representing log p(observation | state)"""
@@ -49,10 +86,14 @@ class ImageObservationModel(nn.Module):
         return emission_probs
 
     def state_emission_distribution(self, s):
-        base_distribution = torch.distributions.bernoulli.Bernoulli(logits=self.logits[s])
-        return torch.distributions.independent.Independent(
-            base_distribution,
-            reinterpreted_batch_ndims=3)
+        encode = torch.nn.functional.one_hot(torch.tensor(s).to(self.device), self.num_states).float()
+        dist = pixelcnn_dist._PixelCNN(
+            [1, 28, 28],
+            self.base_layer,
+            encode.unsqueeze(-1).unsqueeze(-1).repeat(1, 28, 28)
+            )
+        dist.pixelcnn_net = self.pixelcnn_net
+        return dist
 
 
 class HMMTrainer(train.DistributionTrainer):

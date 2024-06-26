@@ -88,11 +88,11 @@ class ImageObservationModel(nn.Module):
     def state_emission_distribution(self, s):
         encode = torch.nn.functional.one_hot(torch.tensor(s).to(self.device), self.num_states).float()
         dist = pixelcnn_dist._PixelCNN(
+            self.pixelcnn_net,
             [1, 28, 28],
             self.base_layer,
             encode.unsqueeze(-1).unsqueeze(-1).repeat(1, 28, 28)
             )
-        dist.pixelcnn_net = self.pixelcnn_net
         return dist
 
 

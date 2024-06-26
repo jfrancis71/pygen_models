@@ -6,16 +6,16 @@ import pygen.layers.independent_quantized_distribution as ql
 
 
 class _PixelCNN(nn.Module):
-    def __init__(self, event_shape, layer, params):
+    def __init__(self, pixelcnn_net, event_shape, layer, params):
         super().__init__()
         self.event_shape = event_shape
         self.layer = layer
-        self.pixelcnn_net = None
         if params is None or len(params.shape)==3:
             self.batch_shape = []
         else:
             self.batch_shape = params.shape[0]
         self.params = params
+        self.pixelcnn_net = pixelcnn_net
 
     def log_prob(self, samples):
         # pylint: disable=E1101
@@ -57,17 +57,23 @@ class _PixelCNN(nn.Module):
 
 class PixelCNNBernoulliDistribution(_PixelCNN):
     def __init__(self, event_shape, nr_resnet=3):
-        super().__init__(event_shape,
-                         bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1]), None)
-        self.pixelcnn_net = pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                            input_channels=self.event_shape[0],
-                            nr_params=self.layer.params_size(), nr_conditional=None)
+        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1])
+        super().__init__(
+            pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
+                input_channels=event_shape[0],
+                nr_params=base_layer.params_size(), nr_conditional=None),
+            event_shape,
+            base_layer,
+            None)
 
 
 class PixelCNNQuantizedDistribution(_PixelCNN):
     def __init__(self, event_shape, nr_resnet=3):
-        super().__init__(event_shape,
-                         ql.IndependentQuantizedDistribution(event_shape=event_shape[:1]), None)
-        self.pixelcnn_net = pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                            input_channels=self.event_shape[0],
-                            nr_params=self.layer.params_size(), nr_conditional=None)
+        base_layer = ql.IndependentQuantizedDistribution(event_shape=event_shape[:1])
+        super().__init__(
+            pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
+                input_channels=self.event_shape[0],
+                nr_params=self.layer.params_size(), nr_conditional=None),
+            event_shape,
+            base_layer,
+            None)

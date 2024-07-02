@@ -62,6 +62,7 @@ class VAE(nn.Module):
         encode = torch.nn.functional.one_hot(z, 10).float()
         decode = self.decoder(encode)
         log_prob = decode.log_prob(x)
+        log_encoder = encoder_dist.logits
         reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * log_prob.detach()
         return log_prob + reinforce - reinforce.detach()
 

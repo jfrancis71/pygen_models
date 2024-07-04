@@ -58,13 +58,15 @@ class SimplePixelCNNNetwork(nn.Module):
     def __init__(self, num_conditional):
         super().__init__()
         self.conv1 = MaskedConv2d(1, 32, 1, 1)
-        self.prj1 = nn.Linear(num_conditional, 32*28*28)
+        if num_conditional is not None:
+            self.prj1 = nn.Linear(num_conditional, 32*28*28)
         self.conv2 = MaskedConv2d(32, 1, 1, 1)
 
     def forward(self, x, sample=False, conditional=None):
         x = self.conv1(x)
-        prj = self.prj1(conditional[:,:,0,0]).reshape([-1, 32, 28, 28])
-        x = x + prj
+        if conditional is not None:
+            prj = self.prj1(conditional[:,:,0,0]).reshape([-1, 32, 28, 28])
+            x = x + prj
         x = F.relu(x)
         x = self.conv2(x)
         return x
@@ -103,7 +105,13 @@ class HMMVAE(nn.Module):
         self.num_z_samples = num_z_samples
         self.device = device
         self.pixelcnn_net = SimplePixelCNNNetwork(self.num_states)
+        self.baseline_pixelcnn_net = SimplePixelCNNNetwork(self.num_states)
         self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+        self.baseline_dist = pixelcnn_dist._PixelCNN(
+            self.baseline_pixelcnn_net,
+            [1, 28, 28],
+            self.base_layer, None
+            )
         self.q = Encoder(num_states)
         self.prior_states_vector = nn.Parameter(torch.randn([num_states]))  # (state)
         self.state_transitions_matrix = \
@@ -141,7 +149,7 @@ class HMMVAE(nn.Module):
             encode = torch.nn.functional.one_hot(z, self.num_states).float()
             q_logits = q_dist[:,t][torch.arange(batch_size), z]
             log_prob_t = self.state_emission_distribution(z).log_prob(x[:, t])
-            reinforce = log_prob_t.detach() * q_logits
+            reinforce = (log_prob_t-self.log_prob_baseline[:, t]).detach() * q_logits
             log_prob += log_prob_t + reinforce - reinforce.detach()
         return log_prob
 
@@ -167,12 +175,15 @@ class HMMVAE(nn.Module):
 
     def elbo(self, x):
         q_dist = torch.zeros([x.shape[0], x.shape[1], self.num_states], device=self.device)
+        self.log_prob_baseline = torch.zeros([x.shape[0], x.shape[1]], device=self.device)
         for t in range(x.shape[1]):
             q_dist[:,t] = self.q(x[:, t]).logits
+            self.log_prob_baseline[:, t] = self.baseline_dist.log_prob(x[:, t])
         log_probs = [self.sample_reconstruct_log_prob(q_dist, x) for _ in range(self.num_z_samples)]
         log_prob = torch.mean(torch.stack(log_probs), dim=0)
         kl_div = self.kl_div(q_dist)
-        return log_prob - kl_div
+        log_prob_baseline = torch.sum(self.log_prob_baseline, axis=1)
+        return log_prob - kl_div + log_prob_baseline - log_prob_baseline.detach()
 
     def log_prob(self, x):
         return self.elbo(x)

@@ -3,6 +3,9 @@ from torch.utils.data import Dataset
 
 
 class SequentialMNISTDataset(Dataset):
+    """An element is a tensor of shape [4,1,28,28] representing a sequence of digit images of increasing value
+    starting from a random digit and 9 wraps to 0.
+    dummy_run uses small subset of MNIST, used just for checking program runs."""
     def __init__(self, mnist_dataset, dummy_run=False):
         if dummy_run:
             self.mnist_dataset_len = 100

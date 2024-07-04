@@ -2,7 +2,6 @@ import argparse
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.categorical import Categorical
@@ -14,41 +13,8 @@ import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import torch.nn.functional as F
 from pygen.neural_nets import classifier_net
+from pygen_models.neural_nets import simple_pixel_cnn_net
 from pygen_models.datasets import sequential_mnist
-
-
-class MaskedConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, padding):
-        super().__init__()
-        self.stride = stride
-        self.padding = padding
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.mask = nn.Parameter(torch.ones([out_channels, in_channels, 3, 3]).float(), requires_grad=False)
-        self.mask[:, :, 2, 2] = 0.0
-        self.mask[:, :, 1, 1:] = 0.0
-        self.mask[:, :, 2] = 0.0
-
-    def forward(self, x):
-        weight = self.conv.weight * self.mask.detach()
-        return nn.functional.conv2d(x, weight, bias=self.conv.bias, stride=self.stride, padding=self.padding)
-
-
-class SimplePixelCNNNetwork(nn.Module):
-    def __init__(self, num_conditional):
-        super().__init__()
-        self.conv1 = MaskedConv2d(1, 32, 1, 1)
-        if num_conditional is not None:
-            self.prj1 = nn.Linear(num_conditional, 32*28*28)
-        self.conv2 = MaskedConv2d(32, 1, 1, 1)
-
-    def forward(self, x, sample=False, conditional=None):
-        x = self.conv1(x)
-        if conditional is not None:
-            prj = self.prj1(conditional[:,:,0,0]).reshape([-1, 32, 28, 28])
-            x = x + prj
-        x = F.relu(x)
-        x = self.conv2(x)
-        return x
 
 
 class Encoder(nn.Module):
@@ -83,8 +49,8 @@ class HMMVAE(nn.Module):
         self.num_states = num_states
         self.num_z_samples = num_z_samples
         self.device = device
-        self.pixelcnn_net = SimplePixelCNNNetwork(self.num_states)
-        self.baseline_pixelcnn_net = SimplePixelCNNNetwork(self.num_states)
+        self.pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(self.num_states)
+        self.baseline_pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(self.num_states)
         self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
         self.baseline_dist = pixelcnn_dist._PixelCNN(
             self.baseline_pixelcnn_net,
@@ -118,7 +84,6 @@ class HMMVAE(nn.Module):
             log_prob_t = self.state_emission_distribution(z).log_prob(x[:, t])
             log_prob += self.num_states * q_probs * log_prob_t
         return log_prob
-
 
     def sample_reconstruct_log_prob_reinforce(self, q_dist, x):  # Using reinforce sampling
         batch_size = q_dist.shape[0]

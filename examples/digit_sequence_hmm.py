@@ -2,7 +2,6 @@ import argparse
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.categorical import Categorical

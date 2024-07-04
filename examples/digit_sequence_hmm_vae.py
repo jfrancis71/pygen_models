@@ -2,7 +2,7 @@ import argparse
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
+
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.categorical import Categorical
@@ -14,28 +14,7 @@ import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import torch.nn.functional as F
 from pygen.neural_nets import classifier_net
-
-
-class MNISTSequenceDataset(Dataset):
-    def __init__(self, mnist_dataset):
-        mnist_dataset_len = len(mnist_dataset)
-#        mnist_dataset_len = 100
-        mnist_digits = torch.stack([mnist_dataset[n][0] for n in range(mnist_dataset_len)]).float()
-        mnist_labels = torch.tensor([mnist_dataset[n][1] for n in range(mnist_dataset_len)])
-        self.digits = [mnist_digits[mnist_labels == d] for d in range(10)]
-
-    def __len__(self):
-        return 60000
-
-    def __getitem__(self, idx):
-        d = torch.randint(low=0, high=9, size=[])
-        rand_idx_sel = torch.randint(low=0, high=self.digits[d].shape[0], size=[])
-        i1 = [self.digits[d][rand_idx_sel]]
-        for s in range(4):
-            d = (d + 1) % 10
-            rand_idx_sel = torch.randint(low=0, high=self.digits[d].shape[0], size=[])
-            i1.append(self.digits[d][rand_idx_sel])
-        return (torch.stack(i1),)
+from pygen_models.datasets import sequential_mnist
 
 
 class MaskedConv2d(nn.Module):
@@ -294,8 +273,9 @@ transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), l
 mnist_dataset = torchvision.datasets.MNIST(
     ns.datasets_folder, train=True, download=False,
     transform=transform)
-dataset = MNISTSequenceDataset(mnist_dataset)
-train_dataset, validation_dataset = random_split(dataset, [55000, 5000])
+train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000])
+train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, ns.dummy_run)
+validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, ns.dummy_run)
 
 mnist_hmm = HMMVAE(ns.mode, ns.num_states, ns.num_z_samples, ns.device)
 

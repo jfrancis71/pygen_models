@@ -10,37 +10,20 @@ import pygen.train.callbacks as callbacks
 from pygen.train import train
 import pygen_models.distributions.hmm as hmm
 import pygen.layers.independent_bernoulli as bernoulli_layer
-import pygen_models.distributions.pixelcnn as pixelcnn_dist
+import pygen_models.layers.pixelcnn as pixelcnn_layer
 import torch.nn.functional as F
 from pygen_models.datasets import sequential_mnist
 from pygen_models.neural_nets import simple_pixel_cnn_net
 
 
-class ImageObservationModel(nn.Module):
-    def __init__(self, num_states, event_shape, device):
-        super().__init__()
-        # pylint: disable=E1101
-        self.num_states = num_states
-        self.device = device
-        self.event_shape = event_shape
-        self.pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(self.num_states)
-        self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
+    def __init__(self, num_conditional):
+        pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(num_conditional)
+        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+        super().__init__(pixelcnn_net, [1, 28, 28], base_layer, num_conditional)
 
-    def emission_logits(self, observation):  # Batch + event_shape
-        """returns vector of length num_states representing log p(observation | state)"""
-        emission_probs = torch.stack([self.state_emission_distribution(s).log_prob(observation)
-                                      for s in range(self.num_states)]).transpose(0, 1)
-        return emission_probs
-
-    def state_emission_distribution(self, s):
-        encode = torch.nn.functional.one_hot(torch.tensor(s).to(self.device), self.num_states).float()
-        dist = pixelcnn_dist._PixelCNN(
-            self.pixelcnn_net,
-            [1, 28, 28],
-            self.base_layer,
-            encode.unsqueeze(-1).unsqueeze(-1).repeat(1, 28, 28)
-            )
-        return dist
+    def forward(self, x):
+        return super().forward(x.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, 28, 28))
 
 
 class HMMTrainer(train.DistributionTrainer):
@@ -53,7 +36,7 @@ class HMMTrainer(train.DistributionTrainer):
             model_path=model_path)
 
     def kl_div(self, observation):  # x is B*Event_shape, ie just one element of sequence
-        emission_logits = self.trainable.observation_model.emission_logits(observation)
+        emission_logits = self.trainable.emission_logits(observation)
         pz = Categorical(logits=emission_logits*0.0)
         pz_given_x = Categorical(logits=emission_logits)
         kl_div = torch.sum(pz.probs * (pz.logits - pz_given_x.logits), axis=1)
@@ -108,7 +91,8 @@ train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [550
 train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, ns.dummy_run)
 validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, ns.dummy_run)
 
-mnist_hmm = hmm.HMM(ns.num_states, ImageObservationModel(ns.num_states, [1, 28, 28], ns.device))
+layer_pixelcnn_bernoulli = LayerPixelCNN(ns.num_states)
+mnist_hmm = hmm.HMMAnalytic(ns.num_states, layer_pixelcnn_bernoulli)
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([

@@ -1,4 +1,4 @@
-"""Simple Discrete VAE with just one categorical variable over 10 states for training on MNIST.
+"""Simple Discrete VAE with just one categorical variable for training on MNIST.
 Provides analytic, uniform and reinforce methods for computing gradient on reconstruction.
 """
 
@@ -17,6 +17,7 @@ import pygen.layers.categorical as layer_categorical
 import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen_models.layers.pixelcnn as pixelcnn_layer
 from pygen_models.neural_nets import simple_pixel_cnn_net
+import pygen_models.distributions.pixelcnn as pixelcnn_dist
 
 
 class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
@@ -35,7 +36,6 @@ class VAE(nn.Module):
         self.num_states = num_states
         self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states)
         self.decoder = LayerPixelCNN(self.num_states)
-        self.layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
         self.pz_logits = torch.zeros([self.num_states])
 
     def pz(self):
@@ -128,6 +128,33 @@ class VAEReinforce(VAEMultiSample):
         return log_prob + reinforce - reinforce.detach()
 
 
+class VAEReinforceBaseline(VAEMultiSample):
+    def __init__(self, num_states, num_z_samples):
+        super().__init__(num_states, num_z_samples)
+        self.baseline_pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(self.num_states)
+        self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+        self.baseline_dist = pixelcnn_dist._PixelCNN(
+            self.baseline_pixelcnn_net,
+            [1, 28, 28],
+            self.base_layer, None
+        )
+
+    def reconstruct_log_prob(self, q_dist, x):
+        baseline_log_prob = self.baseline_dist.log_prob(x)
+        log_probs = [self.sample_reconstruct_log_prob(q_dist, x, baseline_log_prob) for _ in range(self.num_z_samples)]
+        log_prob = torch.mean(torch.stack(log_probs), dim=0)
+        return log_prob + baseline_log_prob - baseline_log_prob.detach()
+
+    def sample_reconstruct_log_prob(self, encoder_dist, x, baseline_log_prob):
+        z = encoder_dist.sample()
+        encode = torch.nn.functional.one_hot(z, self.num_states).float()
+        decode = self.decoder(encode)
+        log_prob = decode.log_prob(x)
+        log_encoder = encoder_dist.logits
+        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * (log_prob.detach()-baseline_log_prob.detach())
+        return log_prob + reinforce - reinforce.detach()
+
+
 class VAETrainer(train.DistributionTrainer):
     def __init__(self, trainable, dataset, batch_size=32, max_epoch=10, batch_end_callback=None,
                  epoch_end_callback=None, use_scheduler=False, dummy_run=False, model_path=None):
@@ -189,6 +216,8 @@ match ns.mode:
         digit_distribution = VAEUniform(ns.num_states, ns.num_z_samples)
     case "reinforce":
         digit_distribution = VAEReinforce(ns.num_states, ns.num_z_samples)
+    case "reinforce_baseline":
+        digit_distribution = VAEReinforceBaseline(ns.num_states, ns.num_z_samples)
     case _:
         raise RuntimeError("mode {} not recognised.".format(ns.mode))
 

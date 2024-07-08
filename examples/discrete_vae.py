@@ -38,7 +38,7 @@ class VAE(nn.Module):
         self.layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
 
     def kl_div(self, encoder_dist):
-        p = Categorical(logits=torch.zeros([self.num_states], device=next(self.parameters()).device))
+        p = Categorical(logits=torch.zeros([self.num_states], device=self.device()))
         kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - p.logits), axis=1)
         return kl_div
 
@@ -58,8 +58,7 @@ class VAE(nn.Module):
         return log_prob - kl_div, log_prob.detach(), kl_div.detach()
 
     def sample(self, batch_size):
-        device = next(self.parameters()).device
-        z = torch.distributions.categorical.Categorical(probs=torch.ones([self.num_states]) / self.num_states).sample(batch_size).to(device)
+        z = torch.distributions.categorical.Categorical(probs=torch.ones([self.num_states], device=self.device()) / self.num_states).sample(batch_size)
         encode = torch.nn.functional.one_hot(z, self.num_states).float()
         decode = self.decoder(encode)
         return decode.sample()
@@ -68,17 +67,19 @@ class VAE(nn.Module):
         encode = torch.nn.functional.one_hot(z, self.num_states).float().unsqueeze(0)
         return self.decoder(encode)
 
+    def device(self):
+        return next(self.parameters()).device
+
 
 class VAEAnalytic(VAE):
     def __init__(self, num_states):
         super().__init__(num_states)
 
     def reconstruct_log_prob(self, encoder_dist, x):
-        device = next(self.parameters()).device
         batch_size = x.shape[0]
         log_prob1 = torch.stack([self.decoder(
             nn.functional.one_hot(
-                torch.tensor(z).to(device), self.num_states).unsqueeze(0).repeat(batch_size, 1).to(device).float()).log_prob(x)
+                torch.tensor(z, device=self.device()), self.num_states).unsqueeze(0).repeat(batch_size, 1).float()).log_prob(x)
             for z in range(self.num_states)], dim=1)
         arr = encoder_dist.probs * log_prob1
         log_prob = torch.sum(arr, axis=1)
@@ -101,9 +102,8 @@ class VAEUniform(VAEMultiSample):
         super().__init__(num_states, num_z_samples)
 
     def sample_reconstruct_log_prob(self, encoder_dist, x):
-        device = next(self.parameters()).device
         batch_size = x.shape[0]
-        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states]).to(device)).sample()
+        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states], device=self.device())).sample()
         encode = torch.nn.functional.one_hot(z, self.num_states).float()
         decode = self.decoder(encode)
         log_prob = decode.log_prob(x)

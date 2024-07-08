@@ -18,9 +18,9 @@ from torch.distributions.categorical import Categorical
 
 
 class Decoder(nn.Module):
-    def __init__(self):
+    def __init__(self, num_states):
         super().__init__()
-        self.linear = torch.nn.Linear(10, 784)
+        self.linear = torch.nn.Linear(num_states, 784)
         self.distribution_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
 
     def forward(self, x):
@@ -29,14 +29,15 @@ class Decoder(nn.Module):
 
 
 class VAE(nn.Module):
-    def __init__(self):
+    def __init__(self, num_states):
         super().__init__()
-        self.encoder = classifier_net.ClassifierNet(mnist=True)
-        self.decoder = Decoder()
+        self.num_states = num_states
+        self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states)
+        self.decoder = Decoder(self.num_states)
         self.layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
 
     def kl_div(self, encoder_dist):
-        p = Categorical(logits=torch.zeros([10], device=next(self.parameters()).device))
+        p = Categorical(logits=torch.zeros([self.num_states], device=next(self.parameters()).device))
         kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - p.logits), axis=1)
         return kl_div
 
@@ -57,36 +58,36 @@ class VAE(nn.Module):
 
     def sample(self, batch_size):
         device = next(self.parameters()).device
-        z = torch.distributions.categorical.Categorical(probs=torch.ones([10]) / 10).sample(batch_size).to(device)
-        encode = torch.nn.functional.one_hot(z, 10).float()
+        z = torch.distributions.categorical.Categorical(probs=torch.ones([self.num_states]) / self.num_states).sample(batch_size).to(device)
+        encode = torch.nn.functional.one_hot(z, self.num_states).float()
         decode = self.decoder(encode)
         return decode.sample()
 
     def forward(self, z):
-        encode = torch.nn.functional.one_hot(z, 10).float().unsqueeze(0)
+        encode = torch.nn.functional.one_hot(z, self.num_states).float().unsqueeze(0)
         decode = self.decoder.linear(encode)
         return self.decoder.distribution_layer(decode[0])
 
 
 class VAEAnalytic(VAE):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, num_states):
+        super().__init__(num_states)
 
     def reconstruct_log_prob(self, encoder_dist, x):
         device = next(self.parameters()).device
         batch_size = x.shape[0]
         log_prob1 = torch.stack([self.decoder(
             nn.functional.one_hot(
-                torch.tensor(z).to(device), 10).unsqueeze(0).repeat(batch_size, 1).to(device).float()).log_prob(x)
-            for z in range(10)], dim=1)
+                torch.tensor(z).to(device), self.num_states).unsqueeze(0).repeat(batch_size, 1).to(device).float()).log_prob(x)
+            for z in range(self.num_states)], dim=1)
         arr = encoder_dist.probs * log_prob1
         log_prob = torch.sum(arr, axis=1)
         return log_prob
 
 
 class VAEMultiSample(VAE):
-    def __init__(self, num_z_samples):
-        super().__init__()
+    def __init__(self, num_states, num_z_samples):
+        super().__init__(num_states)
         self.num_z_samples = num_z_samples
 
     def reconstruct_log_prob(self, q_dist, x):
@@ -96,27 +97,27 @@ class VAEMultiSample(VAE):
 
 
 class VAEUniform(VAEMultiSample):
-    def __init__(self, num_z_samples):
-        super().__init__(num_z_samples)
+    def __init__(self, num_states, num_z_samples):
+        super().__init__(num_states, num_z_samples)
 
     def sample_reconstruct_log_prob(self, encoder_dist, x):
         device = next(self.parameters()).device
         batch_size = x.shape[0]
-        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, 10]).to(device)).sample()
-        encode = torch.nn.functional.one_hot(z, 10).float()
+        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states]).to(device)).sample()
+        encode = torch.nn.functional.one_hot(z, self.num_states).float()
         decode = self.decoder(encode)
         log_prob = decode.log_prob(x)
-        importance_sample = 10.0 * encoder_dist.probs[torch.arange(encoder_dist.probs.size(0)), z] * log_prob
+        importance_sample = self.num_states * encoder_dist.probs[torch.arange(encoder_dist.probs.size(0)), z] * log_prob
         return importance_sample
 
 
 class VAEReinforce(VAEMultiSample):
-    def __init__(self, num_z_samples):
-        super().__init__(num_z_samples)
+    def __init__(self, num_states, num_z_samples):
+        super().__init__(num_states, num_z_samples)
 
     def sample_reconstruct_log_prob(self, encoder_dist, x):
         z = encoder_dist.sample()
-        encode = torch.nn.functional.one_hot(z, 10).float()
+        encode = torch.nn.functional.one_hot(z, self.num_states).float()
         decode = self.decoder(encode)
         log_prob = decode.log_prob(x)
         log_encoder = encoder_dist.logits
@@ -167,6 +168,7 @@ parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
 parser.add_argument("--mode", default="analytic")
+parser.add_argument("--num_states", default=10, type=int)
 parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
@@ -176,21 +178,20 @@ mnist_dataset = torchvision.datasets.MNIST(
     ns.datasets_folder, train=True, download=False,
     transform=transform)
 train_dataset, validation_dataset = random_split(mnist_dataset, [50000, 10000])
-class_labels = [f"{num}" for num in range(10)]
 
 match ns.mode:
     case "analytic":
-        digit_distribution = VAEAnalytic()
+        digit_distribution = VAEAnalytic(ns.num_states)
     case "uniform":
-        digit_distribution = VAEUniform(ns.num_z_samples)
+        digit_distribution = VAEUniform(ns.num_states, ns.num_z_samples)
     case "reinforce":
-        digit_distribution = VAEReinforce(ns.num_z_samples)
+        digit_distribution = VAEReinforce(ns.num_states, ns.num_z_samples)
     case _:
         raise RuntimeError("mode {} not recognised.".format(ns.mode))
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=10),
+    callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
     callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
     callbacks.TBDatasetLogProbDistributionCallback(tb_writer, "validation_log_prob", validation_dataset),
     TBDatasetVAECallback(tb_writer, "validation", validation_dataset)

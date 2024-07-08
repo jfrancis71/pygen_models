@@ -5,27 +5,28 @@ Provides analytic, uniform and reinforce methods for computing gradient on recon
 
 import argparse
 import torch
+import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import random_split
+from torch.distributions.categorical import Categorical
 import torchvision
 from pygen.train import train
 from pygen.train import callbacks
 from pygen.neural_nets import classifier_net
 import pygen.layers.categorical as layer_categorical
-import torch.nn as nn
 import pygen.layers.independent_bernoulli as bernoulli_layer
-from torch.distributions.categorical import Categorical
+import pygen_models.layers.pixelcnn as pixelcnn_layer
+from pygen_models.neural_nets import simple_pixel_cnn_net
 
 
-class Decoder(nn.Module):
-    def __init__(self, num_states):
-        super().__init__()
-        self.linear = torch.nn.Linear(num_states, 784)
-        self.distribution_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
+class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
+    def __init__(self, num_conditional):
+        pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(num_conditional)
+        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+        super().__init__(pixelcnn_net, [1, 28, 28], base_layer, num_conditional)
 
     def forward(self, x):
-        x = self.linear(x)
-        return self.distribution_layer(x)
+        return super().forward(x.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, 28, 28))
 
 
 class VAE(nn.Module):
@@ -33,7 +34,7 @@ class VAE(nn.Module):
         super().__init__()
         self.num_states = num_states
         self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states)
-        self.decoder = Decoder(self.num_states)
+        self.decoder = LayerPixelCNN(self.num_states)
         self.layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
 
     def kl_div(self, encoder_dist):
@@ -65,8 +66,7 @@ class VAE(nn.Module):
 
     def forward(self, z):
         encode = torch.nn.functional.one_hot(z, self.num_states).float().unsqueeze(0)
-        decode = self.decoder.linear(encode)
-        return self.decoder.distribution_layer(decode[0])
+        return self.decoder(encode)
 
 
 class VAEAnalytic(VAE):

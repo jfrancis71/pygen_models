@@ -36,10 +36,13 @@ class VAE(nn.Module):
         self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states)
         self.decoder = LayerPixelCNN(self.num_states)
         self.layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
+        self.pz_logits = torch.zeros([self.num_states])
+
+    def pz(self):
+        return Categorical(logits=self.pz_logits.to(self.device()))
 
     def kl_div(self, encoder_dist):
-        p = Categorical(logits=torch.zeros([self.num_states], device=self.device()))
-        kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - p.logits), axis=1)
+        kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - self.pz().logits), axis=1)
         return kl_div
 
     def reg(self, encoder_dist):
@@ -58,7 +61,7 @@ class VAE(nn.Module):
         return log_prob - kl_div, log_prob.detach(), kl_div.detach()
 
     def sample(self, batch_size):
-        z = torch.distributions.categorical.Categorical(probs=torch.ones([self.num_states], device=self.device()) / self.num_states).sample(batch_size)
+        z = self.pz().sample(batch_size)
         encode = torch.nn.functional.one_hot(z, self.num_states).float()
         decode = self.decoder(encode)
         return decode.sample()

@@ -29,13 +29,11 @@ class Decoder(nn.Module):
 
 
 class VAE(nn.Module):
-    def __init__(self, mode, num_z_samples):
+    def __init__(self):
         super().__init__()
         self.encoder = classifier_net.ClassifierNet(mnist=True)
         self.decoder = Decoder()
         self.layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
-        self.num_z_samples = num_z_samples
-        self.mode = mode
 
     def kl_div(self, encoder_dist):
         p = Categorical(logits=torch.zeros([10], device=next(self.parameters()).device))
@@ -46,53 +44,12 @@ class VAE(nn.Module):
         reg = -torch.sum(encoder_dist.logits, axis=1)
         return reg
 
-    def sample_reconstruct_log_prob_analytic(self, encoder_dist, x):
-        device = next(self.parameters()).device
-        batch_size = x.shape[0]
-        log_prob1 = torch.stack([self.decoder(
-            nn.functional.one_hot(
-                torch.tensor(z).to(device), 10).unsqueeze(0).repeat(batch_size, 1).to(device).float()).log_prob(x)
-            for z in range(10)], dim=1)
-        arr = encoder_dist.probs * log_prob1
-        log_prob = torch.sum(arr, axis=1)
-        return log_prob
-
-    def sample_reconstruct_log_prob_reinforce(self, encoder_dist, x):  # Classic REINFORCE
-        z = encoder_dist.sample()
-        encode = torch.nn.functional.one_hot(z, 10).float()
-        decode = self.decoder(encode)
-        log_prob = decode.log_prob(x)
-        log_encoder = encoder_dist.logits
-        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * log_prob.detach()
-        return log_prob + reinforce - reinforce.detach()
-
-    def sample_reconstruct_log_prob_uniform(self, encoder_dist, x):  # Using uniform sampling
-        device = next(self.parameters()).device
-        batch_size = x.shape[0]
-        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, 10]).to(device)).sample()
-        encode = torch.nn.functional.one_hot(z, 10).float()
-        decode = self.decoder(encode)
-        log_prob = decode.log_prob(x)
-        reinforce = 10.0 * encoder_dist.probs[torch.arange(encoder_dist.probs.size(0)), z] * log_prob
-        return reinforce
-
-    def sample_reconstruct_log_prob(self, encoder_dist, x):
-        if self.mode == "analytic":
-            return self.sample_reconstruct_log_prob_analytic(encoder_dist, x)
-        elif self.mode == "uniform":
-            return self.sample_reconstruct_log_prob_uniform(encoder_dist, x)
-        elif self.mode == "reinforce":
-            return self.sample_reconstruct_log_prob_reinforce(encoder_dist, x)
-        else:
-            raise RuntimeError("Unknown reconstruct mode: ", self.mode)
-
     def log_prob(self, x):
         return self.elbo(x)[0]
 
     def elbo(self, x):
         encoder_dist = self.encoder(x)
-        log_probs = [self.sample_reconstruct_log_prob(encoder_dist, x) for _ in range(self.num_z_samples)]
-        log_prob = torch.mean(torch.stack(log_probs), dim=0)
+        log_prob = self.reconstruct_log_prob(encoder_dist, x)
         kl_div = self.kl_div(encoder_dist)
         reg = self.reg(encoder_dist)
         self.loss = reg
@@ -109,6 +66,62 @@ class VAE(nn.Module):
         encode = torch.nn.functional.one_hot(z, 10).float().unsqueeze(0)
         decode = self.decoder.linear(encode)
         return self.decoder.distribution_layer(decode[0])
+
+
+class VAEAnalytic(VAE):
+    def __init__(self):
+        super().__init__()
+
+    def reconstruct_log_prob(self, encoder_dist, x):
+        device = next(self.parameters()).device
+        batch_size = x.shape[0]
+        log_prob1 = torch.stack([self.decoder(
+            nn.functional.one_hot(
+                torch.tensor(z).to(device), 10).unsqueeze(0).repeat(batch_size, 1).to(device).float()).log_prob(x)
+            for z in range(10)], dim=1)
+        arr = encoder_dist.probs * log_prob1
+        log_prob = torch.sum(arr, axis=1)
+        return log_prob
+
+
+class VAEMultiSample(VAE):
+    def __init__(self, num_z_samples):
+        super().__init__()
+        self.num_z_samples = num_z_samples
+
+    def reconstruct_log_prob(self, q_dist, x):
+        log_probs = [self.sample_reconstruct_log_prob(q_dist, x) for _ in range(self.num_z_samples)]
+        log_prob = torch.mean(torch.stack(log_probs), dim=0)
+        return log_prob
+
+
+class VAEUniform(VAEMultiSample):
+    def __init__(self, num_z_samples):
+        super().__init__(num_z_samples)
+
+    def sample_reconstruct_log_prob(self, encoder_dist, x):
+        device = next(self.parameters()).device
+        batch_size = x.shape[0]
+        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, 10]).to(device)).sample()
+        encode = torch.nn.functional.one_hot(z, 10).float()
+        decode = self.decoder(encode)
+        log_prob = decode.log_prob(x)
+        importance_sample = 10.0 * encoder_dist.probs[torch.arange(encoder_dist.probs.size(0)), z] * log_prob
+        return importance_sample
+
+
+class VAEReinforce(VAEMultiSample):
+    def __init__(self, num_z_samples):
+        super().__init__(num_z_samples)
+
+    def sample_reconstruct_log_prob(self, encoder_dist, x):
+        z = encoder_dist.sample()
+        encode = torch.nn.functional.one_hot(z, 10).float()
+        decode = self.decoder(encode)
+        log_prob = decode.log_prob(x)
+        log_encoder = encoder_dist.logits
+        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * log_prob.detach()
+        return log_prob + reinforce - reinforce.detach()
 
 
 class VAETrainer(train.DistributionTrainer):
@@ -153,7 +166,7 @@ parser.add_argument("--datasets_folder", default=".")
 parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
-parser.add_argument("--sample_mode", default="analytic")
+parser.add_argument("--mode", default="analytic")
 parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
@@ -165,9 +178,17 @@ mnist_dataset = torchvision.datasets.MNIST(
 train_dataset, validation_dataset = random_split(mnist_dataset, [50000, 10000])
 class_labels = [f"{num}" for num in range(10)]
 
-digit_distribution = VAE(ns.sample_mode, ns.num_z_samples).to(ns.device)
-tb_writer = SummaryWriter(ns.tb_folder)
+match ns.mode:
+    case "analytic":
+        digit_distribution = VAEAnalytic()
+    case "uniform":
+        digit_distribution = VAEUniform(ns.num_z_samples)
+    case "reinforce":
+        digit_distribution = VAEReinforce(ns.num_z_samples)
+    case _:
+        raise RuntimeError("mode {} not recognised.".format(ns.mode))
 
+tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
     callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=10),
     callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),

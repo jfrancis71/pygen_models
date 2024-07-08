@@ -7,41 +7,16 @@ from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.categorical import Categorical
 import torchvision
+import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen.train.callbacks as callbacks
 from pygen.train import train
+from pygen.neural_nets import classifier_net
 import pygen_models.distributions.hmm as hmm
-import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen_models.layers.pixelcnn as pixelcnn_layer
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.distributions.hmm as pygen_hmm
-from pygen.neural_nets import classifier_net
 from pygen_models.neural_nets import simple_pixel_cnn_net
 from pygen_models.datasets import sequential_mnist
-
-
-class Encoder(nn.Module):
-    def __init__(self, num_states):
-        super().__init__()
-        in_channels = 1
-        mid_channels = 9216
-        self.conv1 = nn.Conv2d(in_channels, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
-        self.fc1 = nn.Linear(mid_channels, 128)
-        self.fc2 = nn.Linear(128, num_states)
-
-    # pylint: disable=C0103,C0116
-    def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 2)
-        x = torch.flatten(x, 1)  # pylint: disable=E1101
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.fc2(x)
-        distribution = torch.distributions.categorical.Categorical(logits=x)
-        return distribution
 
 
 class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
@@ -58,7 +33,7 @@ class HMMVAE(pygen_hmm.HMM):
     def __init__(self, num_states):
         observation_model = LayerPixelCNN(ns.num_states)
         super().__init__(num_states, observation_model)
-        self.q = Encoder(num_states)
+        self.q = classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states)
 
     def log_prob(self, x):
         return self.elbo(x)

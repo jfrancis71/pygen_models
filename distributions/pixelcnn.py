@@ -20,8 +20,7 @@ class _PixelCNN(nn.Module):
     def log_prob(self, samples):
         # pylint: disable=E1101
         if samples.size()[1:4] != torch.Size(self.event_shape):
-            raise RuntimeError("sample shape {}, but event_shape has shape {}"
-                .format(samples.shape[1:4], self.event_shape))
+            raise RuntimeError(f"sample shape {samples.shape[1:4]}, but event_shape has shape {self.event_shape}")
         params = self.params
         if params is not None:
             if len(params.shape) == 3:

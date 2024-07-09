@@ -219,7 +219,7 @@ match ns.mode:
     case "reinforce_baseline":
         digit_distribution = VAEReinforceBaseline(ns.num_states, ns.num_z_samples)
     case _:
-        raise RuntimeError("mode {} not recognised.".format(ns.mode))
+        raise RuntimeError(f"mode {ns.mode} not recognised.")
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([

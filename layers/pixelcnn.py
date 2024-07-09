@@ -16,8 +16,7 @@ class _PixelCNNDistribution(nn.Module):
 
     def forward(self, x):
         if x.shape[1:4] != torch.Size([self.num_conditional, self.event_shape[1], self.event_shape[2]]):
-            raise RuntimeError("input shape {}, but event_shape has shape {} with num_conditional {}, expecting {}".
-                format(x.shape, self.event_shape, self.num_conditional, ["_", self.num_conditional, self.event_shape[1], self.event_shape[2]]))
+            raise RuntimeError(f"input shape {x.shape}, but event_shape has shape {self.event_shape} with num_conditional {self.num_conditional}, expecting [_,{self.num_conditional, self.event_shape[1], self.event_shape[2]}]")
         pixelcnn = pixelcnn_dist._PixelCNN(
             self.pixelcnn_net,
             self.event_shape,
@@ -30,7 +29,7 @@ class PixelCNNBernoulliDistribution(_PixelCNNDistribution):
     def __init__(self, event_shape, num_conditional, nr_resnet=3):
         base_layer = bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1])
         pixelcnn_net = pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                            input_channels=event_shape[0], nr_params=self.base_layer.params_size(), nr_conditional=num_conditional)
+                            input_channels=event_shape[0], nr_params=base_layer.params_size(), nr_conditional=num_conditional)
         super().__init__(pixelcnn_net, event_shape, base_layer, num_conditional)
 
 
@@ -38,5 +37,5 @@ class PixelCNNQuantizedDistribution(_PixelCNNDistribution):
     def __init__(self, event_shape, num_conditional, nr_resnet=3):
         base_layer = ql.IndependentQuantizedDistribution(event_shape=event_shape[:1])
         pixelcnn_net = pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                            input_channels=event_shape[0], nr_params=self.base_layer.params_size(), nr_conditional=num_conditional)
+                            input_channels=event_shape[0], nr_params=base_layer.params_size(), nr_conditional=num_conditional)
         super().__init__(pixelcnn_net, event_shape, base_layer, num_conditional)

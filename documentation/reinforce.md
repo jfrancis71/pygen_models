@@ -62,12 +62,7 @@ $$
 \nabla_\theta[E_{x \sim p_\theta(x)}[f(y)]] = \nabla_\theta[f(y)] = 0
 $$
 
-Hence:
-
-$$
-\nabla_\theta[E_{x \sim p_\theta(x)}[f(x)-f(y)]] = \nabla_\theta[E_{x \sim p_\theta(x)}[f(x)]]
-$$
-
+Hence it is shown.
 
 ### Reference:
 CS229 Lecture notes, Part XV Policy Gradient (REINFORCE), Tengyu Ma, Stanford University.

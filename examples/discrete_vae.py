@@ -155,6 +155,27 @@ class VAEReinforceBaseline(VAEMultiSample):
         return log_prob + reinforce - reinforce.detach()
 
 
+class VAEReinforceGumbel(VAEMultiSample):
+    def __init__(self, num_states, num_z_samples):
+        super().__init__(num_states, num_z_samples)
+        self.gumbel = torch.distributions.gumbel.Gumbel(torch.tensor(0.0), torch.tensor(1.0))
+
+    def sample_reconstruct_log_prob(self, encoder_dist, x):
+        z = encoder_dist.sample()
+        encode_H = torch.nn.functional.one_hot(z, self.num_states).float()
+        decode_H = self.decoder(encode_H)
+        log_prob_H = decode_H.log_prob(x)
+        gumbels = torch.distributions.gumbel.Gumbel(torch.tensor(0.0, device=self.device()), torch.tensor(1.0, device=self.device())).sample(encoder_dist.probs.shape)
+        encode_h = torch.softmax(encoder_dist.probs + gumbels, dim=-1)
+        with torch.no_grad():
+            decode_h = self.decoder(encode_h)
+        log_prob_h = decode_h.log_prob(x)
+        log_encoder = encoder_dist.logits
+        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * (log_prob_H.detach()-log_prob_h)
+        reparam = log_prob_h
+        return log_prob_H + reinforce - reinforce.detach() + reparam - reparam.detach()
+
+
 class VAETrainer(train.DistributionTrainer):
     def __init__(self, trainable, dataset, batch_size=32, max_epoch=10, batch_end_callback=None,
                  epoch_end_callback=None, use_scheduler=False, dummy_run=False, model_path=None):
@@ -218,6 +239,8 @@ match ns.mode:
         digit_distribution = VAEReinforce(ns.num_states, ns.num_z_samples)
     case "reinforce_baseline":
         digit_distribution = VAEReinforceBaseline(ns.num_states, ns.num_z_samples)
+    case "reinforce_gumbel":
+        digit_distribution = VAEReinforceGumbel(ns.num_states, ns.num_z_samples)
     case _:
         raise RuntimeError(f"mode {ns.mode} not recognised.")
 

@@ -42,6 +42,33 @@ $$
 = E_{x \sim p_\theta(x)}[f(x) \nabla_\theta[Log(p_\theta(x))]]
 $$
 
-Reference:
+### Reinforce with Baseline
+
+We demonstrate:
+
+$$
+\nabla_\theta[E_{x \sim p_\theta(x)}[f(x)-f(y)]] = \nabla_\theta[E_{x \sim p_\theta(x)}[f(x)]]
+$$
+
+Both the derivative and expectation are linear so:
+
+$$
+\nabla_\theta[E_{x \sim p_\theta(x)}[f(x)-f(y)]] = \nabla_\theta[E_{x \sim p_\theta(x)}[f(x)]] - \nabla_\theta[E_{x \sim p_\theta(x)}[f(y)]]
+$$
+
+Expectation over a constant is a constant, and derivative of constant is zero:
+
+$$
+\nabla_\theta[E_{x \sim p_\theta(x)}[f(y)]] = \nabla_\theta[f(y)] = 0
+$$
+
+Hence:
+
+$$
+\nabla_\theta[E_{x \sim p_\theta(x)}[f(x)-f(y)]] = \nabla_\theta[E_{x \sim p_\theta(x)}[f(x)]]
+$$
+
+
+### Reference:
 CS229 Lecture notes, Part XV Policy Gradient (REINFORCE), Tengyu Ma, Stanford University.
 (Note I have replaced integration with summation in my interpretation above)

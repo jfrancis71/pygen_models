@@ -97,7 +97,7 @@ mnist_hmm = hmm.HMMAnalytic(ns.num_states, layer_pixelcnn_bernoulli)
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
     callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
-    callbacks.TBDatasetLogProbDistributionCallback(tb_writer, "validation_log_prob", validation_dataset),
+    callbacks.TBDatasetLogProbCallback(tb_writer, "validation_log_prob", validation_dataset),
     TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
     TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),
 ])

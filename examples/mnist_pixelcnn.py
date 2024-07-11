@@ -21,7 +21,7 @@ tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callback = callbacks.callback_compose([
     callbacks.TBImagesCallback(tb_writer, "generated_images"),
     callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
-    callbacks.TBDatasetLogProbDistributionCallback(tb_writer, "validation_log_prob", validation_dataset)])
+    callbacks.TBDatasetLogProbCallback(tb_writer, "validation_log_prob", validation_dataset)])
 digit_distribution = pixelcnn.PixelCNNBernoulliDistribution(event_shape=[1, 28, 28])
 train.DistributionTrainer(
     digit_distribution.to(ns.device),

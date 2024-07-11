@@ -46,8 +46,7 @@ class HMM(nn.Module):
         return Categorical(logits=self.state_transitions_matrix)
 
     def forward(self, z):
-        one_hot = nn.functional.one_hot(z, self.num_states).float()
-        return self.observation_model(one_hot)
+        return self.observation_model(z)
 
     def device(self):
         return next(self.parameters()).device

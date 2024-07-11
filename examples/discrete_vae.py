@@ -67,8 +67,7 @@ class VAE(nn.Module):
         return decode.sample()
 
     def forward(self, z):
-        encode = torch.nn.functional.one_hot(z, self.num_states).float().unsqueeze(0)
-        return self.decoder(encode)
+        return self.decoder(z)
 
     def device(self):
         return next(self.parameters()).device
@@ -248,7 +247,7 @@ tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
     callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
     callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
-    callbacks.TBDatasetLogProbDistributionCallback(tb_writer, "validation_log_prob", validation_dataset),
+    callbacks.TBDatasetLogProbCallback(tb_writer, "validation_log_prob", validation_dataset),
     TBDatasetVAECallback(tb_writer, "validation", validation_dataset)
 ])
 

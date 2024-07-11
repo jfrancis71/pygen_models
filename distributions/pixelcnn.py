@@ -71,8 +71,8 @@ class PixelCNNQuantizedDistribution(_PixelCNN):
         base_layer = ql.IndependentQuantizedDistribution(event_shape=event_shape[:1])
         super().__init__(
             pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                input_channels=self.event_shape[0],
-                nr_params=self.layer.params_size(), nr_conditional=None),
+                input_channels=event_shape[0],
+                nr_params=base_layer.params_size(), nr_conditional=None),
             event_shape,
             base_layer,
             None)

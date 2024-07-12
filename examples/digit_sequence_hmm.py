@@ -22,9 +22,6 @@ class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
         base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
         super().__init__(pixelcnn_net, [1, 28, 28], base_layer, num_conditional)
 
-    def forward(self, x):
-        return super().forward(x.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, 28, 28))
-
 
 class HMMTrainer(train.DistributionTrainer):
     # pylint: disable=R0913

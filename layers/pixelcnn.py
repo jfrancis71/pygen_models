@@ -15,13 +15,15 @@ class _PixelCNNDistribution(nn.Module):
         self.pixelcnn_net = pixelcnn_net
 
     def forward(self, x):
-        if x.shape[1:4] != torch.Size([self.num_conditional, self.event_shape[1], self.event_shape[2]]):
-            raise RuntimeError(f"input shape {x.shape}, but event_shape has shape {self.event_shape} with num_conditional {self.num_conditional}, expecting [_,{self.num_conditional, self.event_shape[1], self.event_shape[2]}]")
+        batch_shape = x.shape[:-1]
+        if x.shape[-1] != self.num_conditional:
+            raise RuntimeError(f"input shape {x.shape}, but event_shape has shape {self.event_shape} with num_conditional {self.num_conditional}, expecting [_,{self.num_conditional}]")
+        spatial_x = x.unsqueeze(-1).unsqueeze(-1).repeat([1]*len(batch_shape) + [1, self.event_shape[1], self.event_shape[2]])
         pixelcnn = pixelcnn_dist._PixelCNN(
             self.pixelcnn_net,
             self.event_shape,
             self.base_layer,
-            x)
+            spatial_x)
         return pixelcnn
 
 

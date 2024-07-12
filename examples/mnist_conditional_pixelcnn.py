@@ -11,15 +11,6 @@ import pygen.train.callbacks as callbacks
 import pygen_models.layers.pixelcnn as pixelcnn
 
 
-class ConditionalDigitDistribution(nn.Module):
-    def __init__(self, nr_resnet=3):
-        super().__init__()
-        self.layer = pixelcnn.PixelCNNBernoulliDistribution([1, 28, 28], 10, nr_resnet)
-
-    def forward(self, x):
-        return self.layer(x.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, 28, 28))
-
-
 parser = argparse.ArgumentParser(description='PyGen MNIST PixelCNN')
 parser.add_argument("--datasets_folder", default=".")
 parser.add_argument("--tb_folder", default=None)
@@ -36,8 +27,7 @@ epoch_end_callback = callbacks.callback_compose([
     callbacks.TBConditionalImagesCallback(tb_writer, "conditional_generated_images", num_labels=10),
     callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
     callbacks.TBDatasetLogProbCallback(tb_writer, "validation_log_prob", validation_dataset)])
-
-conditional_digit_distribution = ConditionalDigitDistribution(ns.num_resnet)
+conditional_digit_distribution = pixelcnn.PixelCNNQuantizedDistribution([1, 28, 28], 10, ns.num_resnet)
 train.LayerTrainer(
     conditional_digit_distribution.to(ns.device),
     train_dataset,

@@ -9,7 +9,6 @@ from torch.distributions.categorical import Categorical
 import torchvision
 import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen.train.callbacks as callbacks
-from pygen.train import train
 from pygen.neural_nets import classifier_net
 import pygen_models.distributions.hmm as hmm
 import pygen_models.layers.pixelcnn as pixelcnn_layer
@@ -17,6 +16,8 @@ import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.distributions.hmm as pygen_hmm
 from pygen_models.neural_nets import simple_pixel_cnn_net
 from pygen_models.datasets import sequential_mnist
+from pygen_models.train.train import VAETrainer
+import pygen_models.train.callbacks as pygen_models_callbacks
 
 
 class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
@@ -39,9 +40,9 @@ class HMMVAE(pygen_hmm.HMM):
         q_dist = torch.zeros([x.shape[0], x.shape[1], self.num_states], device=self.device())
         for t in range(x.shape[1]):
             q_dist[:, t] = self.q(x[:, t]).logits
-        log_prob = self.reconstruct_log_prob(q_dist, x)
+        reconstruct_log_prob = self.reconstruct_log_prob(q_dist, x)
         kl_div = self.kl_div(q_dist)
-        return log_prob - kl_div
+        return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div
 
     def kl_div(self, q_dist):
         kl_div = self.kl_div_cat(Categorical(logits=q_dist[:, 0]), self.prior_state_distribution())
@@ -52,6 +53,12 @@ class HMMVAE(pygen_hmm.HMM):
 
     def kl_div_cat(self, p, q):
         kl_div = torch.sum(p.probs * (p.logits - q.logits), axis=1)
+        return kl_div
+
+    def reg(self, observations):  # x is B*Event_shape, ie just one element of sequence
+        pz_given_x = self.q(observations[:, 0])
+        pz = Categorical(logits=pz_given_x.logits*0.0)
+        kl_div = self.kl_div_cat(pz, pz_given_x)
         return kl_div
 
 
@@ -146,53 +153,6 @@ class HMMReinforceBaseline(HMMMultiSample):
         return log_prob
 
 
-class HMMTrainer(train.DistributionTrainer):
-    # pylint: disable=R0913
-    def __init__(self, trainable, dataset, batch_size=32, max_epoch=10, batch_end_callback=None,
-                 epoch_end_callback=None, use_scheduler=False, dummy_run=False, model_path=None):
-        super().__init__(
-            trainable, dataset, batch_size, max_epoch, batch_end_callback,
-            epoch_end_callback, use_scheduler=use_scheduler, dummy_run=dummy_run,
-            model_path=model_path)
-
-    def kl_div(self, observation):  # x is B*Event_shape, ie just one element of sequence
-        pz_given_x = self.trainable.q(observation)
-        pz = Categorical(logits=pz_given_x.logits*0.0)
-        kl_div = self.trainable.kl_div_cat(pz, pz_given_x)
-        return kl_div
-
-    def batch_log_prob(self, batch):
-        log_prob = self.trainable.log_prob(batch[0].to(self.device)) - \
-            self.kl_div(batch[0][:, 0].to(self.device))/(self.epoch+1)
-        return log_prob
-
-
-class TBSequenceImageCallback:
-    # pylint: disable=R0903
-    def __init__(self, tb_writer, tb_name):
-        self.tb_writer = tb_writer
-        self.tb_name = tb_name
-
-    def __call__(self, trainer):
-        sample_size = 8
-        num_steps = 3
-        imglist = [trainer.trainable.sample(num_steps=num_steps) for _ in range(sample_size)]
-        imglist = torch.clip(torch.cat(imglist, axis=0), 0.0, 1.0)  # pylint: disable=E1101
-        grid_image = torchvision.utils.make_grid(imglist, padding=10, nrow=num_steps)
-        self.tb_writer.add_image(self.tb_name, grid_image, trainer.epoch)
-
-
-class TBSequenceTransitionMatrixCallback:
-    # pylint: disable=R0903
-    def __init__(self, tb_writer, tb_name):
-        self.tb_writer = tb_writer
-        self.tb_name = tb_name
-
-    def __call__(self, trainer):
-        image = trainer.trainable.state_transition_distribution().probs.detach().unsqueeze(0).cpu().numpy()
-        self.tb_writer.add_image(self.tb_name, image, trainer.epoch)
-
-
 parser = argparse.ArgumentParser(description='PyGen MNIST Sequence HMM')
 parser.add_argument("--datasets_folder", default=".")
 parser.add_argument("--tb_folder", default=None)
@@ -225,14 +185,18 @@ match ns.mode:
         raise RuntimeError(f"mode {ns.mode} not recognised.")
 
 tb_writer = SummaryWriter(ns.tb_folder)
+batch_end_callbacks = callbacks.callback_compose([
+    callbacks.TBBatchLogProbCallback(tb_writer, "batch_log_prob"),
+    pygen_models_callbacks.TBBatchVAECallback(tb_writer)
+])
 epoch_end_callbacks = callbacks.callback_compose([
     callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
     callbacks.TBDatasetLogProbCallback(tb_writer, "validation_log_prob", validation_dataset),
-    TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
-    TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),
+    pygen_models_callbacks.TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
+    pygen_models_callbacks.TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),
 ])
-trainer = HMMTrainer(
+trainer = VAETrainer(
     mnist_hmm.to(ns.device),
-    train_dataset, max_epoch=ns.max_epoch, epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)
+    train_dataset, max_epoch=ns.max_epoch, batch_end_callback=batch_end_callbacks, epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)
 torch.autograd.set_detect_anomaly(True)
 trainer.train()

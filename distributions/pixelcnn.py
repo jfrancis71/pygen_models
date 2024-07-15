@@ -8,6 +8,8 @@ import pygen.layers.independent_quantized_distribution as ql
 class _PixelCNN(nn.Module):
     def __init__(self, pixelcnn_net, event_shape, layer, params):
         super().__init__()
+        if len(event_shape) != 3:
+            raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
         self.event_shape = event_shape
         self.layer = layer
         if params is None or len(params.shape)==3:
@@ -31,31 +33,54 @@ class _PixelCNN(nn.Module):
         return self.layer(layer_logits).log_prob(permute_samples).sum(axis=[1, 2])
 
     def sample(self, sample_shape=None):
-        if sample_shape is None:
-            batch_shape = [1]
-        else:
-            batch_shape = sample_shape
         with torch.no_grad():
             params = self.params
             if params is not None:
                 if len(params.shape) == 3:
-                    params = params.unsqueeze(0).repeat(batch_shape[0], 1, 1, 1)
+                    if sample_shape is None:
+                        params = params.unsqueeze(0)
+                    else:
+                        params = params.unsqueeze(0).repeat(sample_shape[0], 1, 1, 1)
+                elif len(params.shape) == 4:
+                    if sample_shape is None:
+                        params = params
+                    else:
+                        params = params.repeat(sample_shape[0], 1, 1, 1)
             # pylint: disable=E1101
-            sample = torch.zeros(batch_shape+self.event_shape,
-                device=next(self.parameters()).device)
+            if params is None:
+                if sample_shape is None:
+                    net_batch_shape = [1]
+                else:
+                    net_batch_shape = sample_shape
+            else:
+                net_batch_shape = [params.shape[0]]
+            sample = torch.zeros(net_batch_shape+self.event_shape, device=self.device())
             for y in range(self.event_shape[1]):
                 for x in range(self.event_shape[2]):
                     logits = self.pixelcnn_net((sample*2)-1, sample=True,
                         conditional=params)[:, :, y, x]
                     pixel_sample = self.layer(logits).sample()
                     sample[:, :, y, x] = pixel_sample
-        if sample_shape is None:
+        if sample_shape is None and params is None:
             return sample[0]
         return sample
 
+    def device(self):
+        return next(self.parameters()).device
+
 
 class PixelCNNBernoulliDistribution(_PixelCNN):
+    """
+    >>> bern_dist = PixelCNNBernoulliDistribution([1, 4, 4], nr_resnet=1)
+    >>> bern_dist.sample().shape
+    torch.Size([1, 4, 4])
+    >>> bern_dist.sample(sample_shape=[3]).shape
+    torch.Size([3, 1, 4, 4])
+    """
     def __init__(self, event_shape, nr_resnet=3):
+        """event_shape is of form [C, Y, X]"""
+        if len(event_shape) != 3:
+            raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
         base_layer = bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1])
         super().__init__(
             pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
@@ -68,6 +93,8 @@ class PixelCNNBernoulliDistribution(_PixelCNN):
 
 class PixelCNNQuantizedDistribution(_PixelCNN):
     def __init__(self, event_shape, nr_resnet=3):
+        if len(event_shape) != 3:
+            raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
         base_layer = ql.IndependentQuantizedDistribution(event_shape=event_shape[:1])
         super().__init__(
             pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
@@ -76,3 +103,8 @@ class PixelCNNQuantizedDistribution(_PixelCNN):
             event_shape,
             base_layer,
             None)
+
+
+if __name__ == '__main__':
+    import doctest
+    doctest.testmod()

@@ -10,6 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import random_split
 from torch.distributions.categorical import Categorical
 import torchvision
+from torchvision.utils import make_grid
 from pygen.train import callbacks
 from pygen.neural_nets import classifier_net
 import pygen.layers.categorical as layer_categorical
@@ -172,6 +173,20 @@ class VAEReinforceGumbel(VAEMultiSample):
         return log_prob_H + reinforce - reinforce.detach() + reparam - reparam.detach()
 
 
+class TBVAEReconstructCallback:
+    def __init__(self, tb_writer, dataset):
+        self.tb_writer = tb_writer
+        self.dataset = dataset
+
+    def __call__(self, trainer):
+        dataset_images = torch.stack([self.dataset[i][0].to(trainer.device) for i in range(10)])
+        z = trainer.trainable.encoder(dataset_images).sample()
+        reconstruct_images = trainer.trainable.decoder(nn.functional.one_hot(z, trainer.trainable.num_states).float()).sample()
+        imglist = torch.cat([dataset_images, reconstruct_images], dim=0)
+        grid_image = make_grid(imglist, padding=10, nrow=10)
+        self.tb_writer.add_image("reconstruct_image", grid_image, trainer.epoch)
+
+
 parser = argparse.ArgumentParser(description='PyGen MNIST Discrete VAE')
 parser.add_argument("--datasets_folder", default=".")
 parser.add_argument("--tb_folder", default=None)
@@ -204,15 +219,16 @@ match ns.mode:
         raise RuntimeError(f"mode {ns.mode} not recognised.")
 
 tb_writer = SummaryWriter(ns.tb_folder)
+batch_end_callbacks = callbacks.callback_compose([
+    callbacks.TBBatchLogProbCallback(tb_writer, "batch_log_prob"),
+    pygen_models_callbacks.TBBatchVAECallback(tb_writer)
+])
 epoch_end_callbacks = callbacks.callback_compose([
     callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
     callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
     callbacks.TBDatasetLogProbCallback(tb_writer, "validation_log_prob", validation_dataset),
-    pygen_models_callbacks.TBDatasetVAECallback(tb_writer, "validation", validation_dataset)
-])
-batch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBBatchLogProbCallback(tb_writer, "batch_log_prob"),
-    pygen_models_callbacks.TBBatchVAECallback(tb_writer)
+    pygen_models_callbacks.TBDatasetVAECallback(tb_writer, "validation", validation_dataset),
+    TBVAEReconstructCallback(tb_writer, validation_dataset)
 ])
 VAETrainer(
     digit_distribution.to(ns.device),

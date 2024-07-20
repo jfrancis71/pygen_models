@@ -54,7 +54,7 @@ class _PixelCNN(nn.Module):
                     net_batch_shape = sample_shape
             else:
                 net_batch_shape = [params.shape[0]]
-            sample = torch.zeros(net_batch_shape+self.event_shape, device=self.device())
+            sample = torch.zeros(net_batch_shape+self.event_shape)
             for y in range(self.event_shape[1]):
                 for x in range(self.event_shape[2]):
                     logits = self.pixelcnn_net((sample*2)-1, sample=True,
@@ -66,9 +66,6 @@ class _PixelCNN(nn.Module):
         if sample_shape is not None and params is not None:
             return torch.reshape(sample, sample_shape+[self.params.shape[0]]+self.event_shape)
         return sample
-
-    def device(self):
-        return next(self.parameters()).device
 
 
 class PixelCNNBernoulliDistribution(_PixelCNN):

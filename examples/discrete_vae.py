@@ -39,7 +39,7 @@ class VAE(nn.Module):
         self.pz_logits = torch.zeros([self.num_states])
 
     def pz(self):
-        return Categorical(logits=self.pz_logits.to(self.device()))
+        return Categorical(logits=self.pz_logits)
 
     def kl_div(self, encoder_dist):
         kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - self.pz().logits), axis=1)
@@ -68,9 +68,6 @@ class VAE(nn.Module):
     def forward(self, z):
         return self.decoder(z)
 
-    def device(self):
-        return next(self.parameters()).device
-
 
 class VAEAnalytic(VAE):
     def __init__(self, num_states):
@@ -80,7 +77,7 @@ class VAEAnalytic(VAE):
         batch_size = x.shape[0]
         log_prob1 = torch.stack([self.decoder(
             nn.functional.one_hot(
-                torch.tensor(z, device=self.device()), self.num_states).unsqueeze(0).repeat(batch_size, 1).float()).log_prob(x)
+                torch.tensor(z), self.num_states).unsqueeze(0).repeat(batch_size, 1).float()).log_prob(x)
             for z in range(self.num_states)], dim=1)
         arr = encoder_dist.probs * log_prob1
         log_prob = torch.sum(arr, axis=1)
@@ -104,7 +101,7 @@ class VAEUniform(VAEMultiSample):
 
     def sample_reconstruct_log_prob(self, encoder_dist, x):
         batch_size = x.shape[0]
-        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states], device=self.device())).sample()
+        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states])).sample()
         encode = torch.nn.functional.one_hot(z, self.num_states).float()
         decode = self.decoder(encode)
         log_prob = decode.log_prob(x)
@@ -163,7 +160,7 @@ class VAEReinforceGumbel(VAEMultiSample):
         encode_H = torch.nn.functional.one_hot(z, self.num_states).float()
         decode_H = self.decoder(encode_H)
         log_prob_H = decode_H.log_prob(x)
-        gumbels = torch.distributions.gumbel.Gumbel(torch.tensor(0.0, device=self.device()), torch.tensor(1.0, device=self.device())).sample(encoder_dist.probs.shape)
+        gumbels = torch.distributions.gumbel.Gumbel(torch.tensor(0.0), torch.tensor(1.0)).sample(encoder_dist.probs.shape)
         encode_h = torch.softmax(encoder_dist.probs + gumbels, dim=-1)
         with torch.no_grad():
             decode_h = self.decoder(encode_h)

@@ -63,6 +63,8 @@ class _PixelCNN(nn.Module):
                     sample[:, :, y, x] = pixel_sample
         if sample_shape is None and params is None:
             return sample[0]
+        if sample_shape is not None and params is not None:
+            return torch.reshape(sample, sample_shape+[self.params.shape[0]]+self.event_shape)
         return sample
 
     def device(self):

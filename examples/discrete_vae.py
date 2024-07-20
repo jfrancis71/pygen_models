@@ -15,11 +15,12 @@ from pygen.train import callbacks
 from pygen.neural_nets import classifier_net
 import pygen.layers.categorical as layer_categorical
 import pygen.layers.independent_bernoulli as bernoulli_layer
+import pygen.train.train as train
 import pygen_models.layers.pixelcnn as pixelcnn_layer
 from pygen_models.neural_nets import simple_pixel_cnn_net
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
-from pygen_models.train.train import VAETrainer
 import pygen_models.train.callbacks as pygen_models_callbacks
+import pygen_models.train.train as pygen_models_train
 
 
 class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
@@ -33,7 +34,7 @@ class VAE(nn.Module):
     def __init__(self, num_states):
         super().__init__()
         self.num_states = num_states
-        self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states)
+        self.encoder = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), layer_categorical.Categorical())
         self.decoder = LayerPixelCNN(self.num_states)
         self.pz_logits = torch.zeros([self.num_states])
 
@@ -44,10 +45,10 @@ class VAE(nn.Module):
         kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - self.pz().logits), axis=1)
         return kl_div
 
-    def reg(self, x):
-        encoder_dist = self.encoder(x)
+    def epoch_regularizer_penalty(self, batch):
+        encoder_dist = self.encoder(batch[0])
         reg = -torch.sum(encoder_dist.logits, axis=1)
-        return reg
+        return reg.mean()
 
     def log_prob(self, x):
         return self.elbo(x)[0]
@@ -178,17 +179,17 @@ class TBVAEReconstructCallback:
         self.tb_writer = tb_writer
         self.dataset = dataset
 
-    def __call__(self, trainer):
-        dataset_images = torch.stack([self.dataset[i][0].to(trainer.device) for i in range(10)])
-        z = trainer.trainable.encoder(dataset_images).sample()
-        reconstruct_images = trainer.trainable.decoder(nn.functional.one_hot(z, trainer.trainable.num_states).float()).sample()
+    def __call__(self, training_loop_info):
+        dataset_images = torch.stack([self.dataset[i][0] for i in range(10)])
+        z = training_loop_info.trainable.encoder(dataset_images).sample()
+        reconstruct_images = training_loop_info.trainable.decoder(nn.functional.one_hot(z, training_loop_info.trainable.num_states).float()).sample()
         imglist = torch.cat([dataset_images, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
-        self.tb_writer.add_image("reconstruct_image", grid_image, trainer.epoch)
+        self.tb_writer.add_image("reconstruct_image", grid_image, training_loop_info.epoch_num)
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Discrete VAE')
-parser.add_argument("--datasets_folder", default=".")
+parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
@@ -198,12 +199,12 @@ parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
-transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float()])
+transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(), train.DevicePlacement()])
 mnist_dataset = torchvision.datasets.MNIST(
     ns.datasets_folder, train=True, download=False,
     transform=transform)
 train_dataset, validation_dataset = random_split(mnist_dataset, [50000, 10000])
-
+torch.set_default_device(ns.device)
 match ns.mode:
     case "analytic":
         digit_distribution = VAEAnalytic(ns.num_states)
@@ -219,19 +220,12 @@ match ns.mode:
         raise RuntimeError(f"mode {ns.mode} not recognised.")
 
 tb_writer = SummaryWriter(ns.tb_folder)
-batch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBBatchLogProbCallback(tb_writer, "batch_log_prob"),
-    pygen_models_callbacks.TBBatchVAECallback(tb_writer)
-])
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
-    callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
-    callbacks.TBDatasetLogProbCallback(tb_writer, "validation_log_prob", validation_dataset),
-    pygen_models_callbacks.TBDatasetVAECallback(tb_writer, "validation", validation_dataset),
+    callbacks.TBConditionalImages(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
+    callbacks.TBEpochLogMetrics(tb_writer),
+    callbacks.TBDatasetMetricsLogging(tb_writer, "validation", validation_dataset),
     TBVAEReconstructCallback(tb_writer, validation_dataset)
 ])
-VAETrainer(
-    digit_distribution.to(ns.device),
-    train_dataset, max_epoch=ns.max_epoch,
-    batch_end_callback=batch_end_callbacks,
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run).train()
+train.train(digit_distribution, train_dataset, pygen_models_train.vae_trainer,
+    batch_end_callback=callbacks.TBBatchLogMetrics(tb_writer),
+    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=True)

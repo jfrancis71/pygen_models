@@ -19,7 +19,6 @@ import pygen.train.train as train
 import pygen_models.layers.pixelcnn as pixelcnn_layer
 from pygen_models.neural_nets import simple_pixel_cnn_net
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
-import pygen_models.train.callbacks as pygen_models_callbacks
 import pygen_models.train.train as pygen_models_train
 
 
@@ -171,18 +170,16 @@ class VAEReinforceGumbel(VAEMultiSample):
         return log_prob_H + reinforce - reinforce.detach() + reparam - reparam.detach()
 
 
-class TBVAEReconstructCallback:
-    def __init__(self, tb_writer, dataset):
-        self.tb_writer = tb_writer
-        self.dataset = dataset
+def tb_vae_reconstruct(tb_writer, dataset):
 
-    def __call__(self, training_loop_info):
-        dataset_images = torch.stack([self.dataset[i][0] for i in range(10)])
+    def cb_tb_vae_reconstruct( training_loop_info):
+        dataset_images = torch.stack([dataset[i][0] for i in range(10)])
         z = training_loop_info.trainable.encoder(dataset_images).sample()
         reconstruct_images = training_loop_info.trainable.decoder(nn.functional.one_hot(z, training_loop_info.trainable.num_states).float()).sample()
         imglist = torch.cat([dataset_images, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
-        self.tb_writer.add_image("reconstruct_image", grid_image, training_loop_info.epoch_num)
+        tb_writer.add_image("reconstruct_image", grid_image, training_loop_info.epoch_num)
+    return cb_tb_vae_reconstruct
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Discrete VAE')
@@ -221,7 +218,7 @@ epoch_end_callbacks = callbacks.callback_compose([
     callbacks.tb_conditional_images(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
-    TBVAEReconstructCallback(tb_writer, validation_dataset)
+    tb_vae_reconstruct(tb_writer, validation_dataset)
 ])
 train.train(digit_distribution, train_dataset, pygen_models_train.vae_trainer,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),

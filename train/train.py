@@ -1,5 +1,4 @@
 import numpy as np
-from pygen.train import train
 
 
 def distribution_trainer(distribution, batch):
@@ -7,7 +6,7 @@ def distribution_trainer(distribution, batch):
     return log_prob_mean, np.array((log_prob_mean.cpu().detach().numpy()), dtype=[('log_prob', 'float32')])
 
 def vae_trainer(distribution, batch):
-    log_prob, reconstruct_log_prob, kl_div = distribution.elbo(batch[0])#.to(self.device))
+    log_prob, reconstruct_log_prob, kl_div = distribution.elbo(batch[0])
     log_prob_mean = log_prob.mean()
     reconstruct_log_prob_mean = reconstruct_log_prob.mean()
     kl_div_mean = kl_div.mean()

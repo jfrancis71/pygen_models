@@ -7,6 +7,8 @@ import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 import pygen_models.distributions.pixelcnn as pixelcnn
 import pygen_models.train.train as pygen_models_train
+import pygen_models.train.callbacks as models_callbacks
+
 
 parser = argparse.ArgumentParser(description='PyGen MNIST PixelCNN')
 parser.add_argument("--datasets_folder", default="~/datasets")
@@ -22,11 +24,11 @@ train_dataset, validation_dataset = random_split(dataset, [50000, 10000])
 torch.set_default_device(ns.device)
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBSampleImages(tb_writer, "generated_images"),
-    callbacks.TBEpochLogMetrics(tb_writer),
-    callbacks.TBDatasetMetricsLogging(tb_writer, "validation", validation_dataset)
+    models_callbacks.TBSampleImages(tb_writer, "generated_images"),
+    callbacks.tb_epoch_log_metrics(tb_writer),
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
 ])
 digit_distribution = pixelcnn.PixelCNNBernoulliDistribution(event_shape=[1, 28, 28], nr_resnet=ns.num_resnet)
 train.train(digit_distribution, train_dataset, pygen_models_train.distribution_trainer,
-    batch_end_callback=callbacks.TBBatchLogMetrics(tb_writer),
+    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)

@@ -9,6 +9,7 @@ import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 import pygen_models.distributions.pixelcnn as pixelcnn
 import pygen_models.train.train as pygen_models_train
+import pygen_models.train.callbacks as pygen_models_callbacks
 
 
 parser = argparse.ArgumentParser(description='PyGen CIFAR10 PixelCNN')
@@ -25,11 +26,11 @@ train_dataset, validation_dataset = random_split(dataset, [45000, 5000])
 torch.set_default_device(ns.device)
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBSampleImages(tb_writer, "generated_images"),
-    callbacks.TBEpochLogMetrics(tb_writer),
-    callbacks.TBDatasetMetricsLogging(tb_writer, "validation", validation_dataset)
+    pygen_models_callbacks.TBSampleImages(tb_writer, "generated_images"),
+    callbacks.tb_epoch_log_metrics(tb_writer),
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
 ])
 image_distribution = pixelcnn.PixelCNNQuantizedDistribution(event_shape=[3, 32, 32], nr_resnet=ns.num_resnet)
 train.train(image_distribution, train_dataset, pygen_models_train.distribution_trainer,
-    batch_end_callback=callbacks.TBBatchLogMetrics(tb_writer),
+    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)

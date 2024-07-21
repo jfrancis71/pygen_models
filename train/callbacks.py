@@ -1,5 +1,27 @@
 import torch
 import torchvision
+from torchvision.utils import make_grid
+
+
+class TBSampleImages:
+    """Creates a 4x4 grid of images by sampling the trainable.
+
+    >>> callback = TBSampleImages(None, "")
+    >>> base_distribution = torch.distributions.bernoulli.Bernoulli(logits=torch.zeros([1, 8, 8]))
+    >>> distribution = torch.distributions.independent.Independent(base_distribution, reinterpreted_batch_ndims=3)
+    >>> trainer = type('Trainer', (object,), {'trainable': distribution})()
+    >>> callback(trainer)
+    """
+    # pylint: disable=R0903
+    def __init__(self, tb_writer, tb_name):
+        self.tb_writer = tb_writer
+        self.tb_name = tb_name
+
+    def __call__(self, training_loop_info):
+        imglist = training_loop_info.trainable.sample([16])
+        grid_image = make_grid(imglist, padding=10, nrow=4, value_range=(0.0, 1.0))
+        if self.tb_writer is not None:
+            self.tb_writer.add_image(self.tb_name, grid_image, training_loop_info.epoch_num)
 
 
 class TBDatasetVAECallback:

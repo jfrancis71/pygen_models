@@ -218,11 +218,11 @@ match ns.mode:
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBConditionalImages(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
-    callbacks.TBEpochLogMetrics(tb_writer),
-    callbacks.TBDatasetMetricsLogging(tb_writer, "validation", validation_dataset),
+    callbacks.tb_conditional_images(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
+    callbacks.tb_epoch_log_metrics(tb_writer),
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
     TBVAEReconstructCallback(tb_writer, validation_dataset)
 ])
 train.train(digit_distribution, train_dataset, pygen_models_train.vae_trainer,
-    batch_end_callback=callbacks.TBBatchLogMetrics(tb_writer),
+    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=True)

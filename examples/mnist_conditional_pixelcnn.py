@@ -27,10 +27,10 @@ train_dataset, validation_dataset = random_split(dataset, [50000, 10000])
 torch.set_default_device(ns.device)
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBConditionalImages(tb_writer, "conditional_generated_images", num_labels=10),
-    callbacks.TBEpochLogMetrics(tb_writer),
-    callbacks.TBDatasetMetricsLogging(tb_writer, "validation", validation_dataset)])
+    callbacks.tb_conditional_images(tb_writer, "conditional_generated_images", num_labels=10),
+    callbacks.tb_epoch_log_metrics(tb_writer),
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)])
 conditional_digit_distribution = pixelcnn.PixelCNNQuantizedDistribution([1, 28, 28], 10, ns.num_resnet)
 train.train(conditional_digit_distribution, train_dataset, train.OneHotLayerTrainer(10),
-    batch_end_callback=callbacks.TBBatchLogMetrics(tb_writer),
+    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)

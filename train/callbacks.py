@@ -3,57 +3,21 @@ import torchvision
 from torchvision.utils import make_grid
 
 
-class TBSampleImages:
+def tb_sample_images(tb_writer, tb_name):
     """Creates a 4x4 grid of images by sampling the trainable.
 
-    >>> callback = TBSampleImages(None, "")
+    >>> callback = tb_sample_images(None, "")
     >>> base_distribution = torch.distributions.bernoulli.Bernoulli(logits=torch.zeros([1, 8, 8]))
     >>> distribution = torch.distributions.independent.Independent(base_distribution, reinterpreted_batch_ndims=3)
-    >>> trainer = type('Trainer', (object,), {'trainable': distribution})()
+    >>> trainer = type('TrainingLoopInfo', (object,), {'trainable': distribution})()
     >>> callback(trainer)
     """
-    # pylint: disable=R0903
-    def __init__(self, tb_writer, tb_name):
-        self.tb_writer = tb_writer
-        self.tb_name = tb_name
-
-    def __call__(self, training_loop_info):
+    def cb_tb_sample_images(training_loop_info):
         imglist = training_loop_info.trainable.sample([16])
         grid_image = make_grid(imglist, padding=10, nrow=4, value_range=(0.0, 1.0))
-        if self.tb_writer is not None:
-            self.tb_writer.add_image(self.tb_name, grid_image, training_loop_info.epoch_num)
-
-
-class TBDatasetVAECallback:
-    def __init__(self, tb_writer, tb_name, dataset, batch_size=32):
-        self.tb_writer = tb_writer
-        self.tb_name = tb_name
-        self.batch_size = batch_size
-        self.dataset = dataset
-
-    def __call__(self, trainer):
-        dataloader = torch.utils.data.DataLoader(
-            self.dataset, collate_fn=None,
-            batch_size=self.batch_size, shuffle=True, drop_last=True)
-        reconstruct_log_prob = 0.0
-        kl = 0.0
-        size = 0
-        for (_, batch) in enumerate(dataloader):
-            _, batch_reconstruct_log_prob, batch_kl = trainer.trainable.elbo(batch[0].to(trainer.device))
-            reconstruct_log_prob += batch_reconstruct_log_prob.mean().item()
-            kl += batch_kl.mean().item()
-            size += 1
-        self.tb_writer.add_scalar(self.tb_name+"_reconstruct", reconstruct_log_prob/size, trainer.epoch)
-        self.tb_writer.add_scalar(self.tb_name + "_kl", kl / size, trainer.epoch)
-
-
-class TBBatchVAECallback:
-    def __init__(self, tb_writer):
-        self.tb_writer = tb_writer
-
-    def __call__(self, trainer):
-        self.tb_writer.add_scalar("batch_reconstruct_log_prob", trainer.reconstruct_log_prob_item, trainer.epoch)
-        self.tb_writer.add_scalar("batch_kl_div", trainer.kl_div_item, trainer.epoch)
+        if tb_writer is not None:
+            tb_writer.add_image(tb_name, grid_image, training_loop_info.epoch_num)
+    return cb_tb_sample_images
 
 
 class TBSequenceImageCallback:

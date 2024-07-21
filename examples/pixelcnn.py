@@ -35,7 +35,7 @@ train_dataset, validation_dataset = random_split(dataset, data_split)
 torch.set_default_device(ns.device)
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    pygen_models_callbacks.TBSampleImages(tb_writer, "generated_images"),
+    pygen_models_callbacks.tb_sample_images(tb_writer, "generated_images"),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
 ])

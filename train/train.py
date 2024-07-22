@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def distribution_trainer(distribution, batch):
+def distribution_objective(distribution, batch):
     log_prob_mean = (distribution.log_prob(batch[0])).mean()
     return log_prob_mean, np.array((log_prob_mean.cpu().detach().numpy()), dtype=[('log_prob', 'float32')])
 

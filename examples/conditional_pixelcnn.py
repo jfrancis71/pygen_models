@@ -46,6 +46,6 @@ elif ns.dataset == "cifar10":
     conditional_distribution = (
         pixelcnn.PixelCNNQuantizedDistribution([3, 32, 32], 10, ns.num_resnet))
 train.train(
-    conditional_distribution, train_dataset, train.OneHotLayerTrainer(10),
+    conditional_distribution, train_dataset, train.layer_objective(reverse_inputs=True, num_classes=10),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callback, dummy_run=ns.dummy_run)

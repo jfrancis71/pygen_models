@@ -47,6 +47,6 @@ if ns.dataset == "mnist":
 elif ns.dataset == "cifar10":
     image_distribution = (
         pixelcnn.PixelCNNQuantizedDistribution([3, 32, 32], ns.num_resnet))
-train.train(image_distribution, train_dataset, pygen_models_train.distribution_trainer,
+train.train(image_distribution, train_dataset, pygen_models_train.distribution_objective,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)

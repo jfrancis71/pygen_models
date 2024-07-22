@@ -17,6 +17,7 @@ parser.add_argument("--dataset", default="mnist")
 parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--num_resnet", default=3, type=int)
+parser.add_argument("--net", default="simple_pixelcnn_net")
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
@@ -35,18 +36,25 @@ else:
     raise RuntimeError(f"{ns.dataset} not recognized.")
 train_dataset, validation_dataset = random_split(dataset, data_split)
 torch.set_default_device(ns.device)
+match ns.net:
+    case "simple_pixelcnn_net": net = pixelcnn.make_simple_pixelcnn_net()
+    case "pixelcnn_net":  net = pixelcnn.make_pixelcnn_net(ns.num_resnet)
+    case _: raise RuntimeError("{ns.net} net name not recognized.")
+match ns.dataset:
+    case "mnist":
+        image_distribution = pixelcnn.make_pixelcnn(
+            pixelcnn.make_bernoulli_base_distribution(), net, event_shape=[1, 28, 28])
+    case "cifar10":
+        image_distribution = pixelcnn.make_pixelcnn(
+            pixelcnn.make_quantized_base_distribution(), net, event_shape=[3, 32, 32])
+    case _:
+        raise RuntimeError("dataset {ns.dataset} not recognized.")
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
     pygen_models_callbacks.tb_sample_images(tb_writer, "generated_images"),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
 ])
-if ns.dataset == "mnist":
-    image_distribution = (
-        pixelcnn.PixelCNNBernoulliDistribution([1, 28, 28], ns.num_resnet))
-elif ns.dataset == "cifar10":
-    image_distribution = (
-        pixelcnn.PixelCNNQuantizedDistribution([3, 32, 32], ns.num_resnet))
 train.train(image_distribution, train_dataset, pygen_models_train.distribution_objective,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)

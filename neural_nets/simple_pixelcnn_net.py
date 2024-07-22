@@ -20,14 +20,14 @@ class MaskedConv2d(nn.Module):
         return nn.functional.conv2d(x, weight, bias=self.conv.bias, stride=self.stride, padding=self.padding)
 
 
-class SimplePixelCNNNetwork(nn.Module):
+class SimplePixelCNNNet(nn.Module):
     """A Simple PixelCNN style neural network."""
-    def __init__(self, num_conditional):
+    def __init__(self, input_channels, output_channels, num_conditional):
         super().__init__()
-        self.conv1 = MaskedConv2d(1, 32, 1, 1)
+        self.conv1 = MaskedConv2d(input_channels, 32, 1, 1)
         if num_conditional is not None:
             self.prj1 = nn.Linear(num_conditional, 32*28*28)
-        self.conv2 = MaskedConv2d(32, 1, 1, 1)
+        self.conv2 = MaskedConv2d(32, output_channels, 1, 1)
 
     def forward(self, x, sample=False, conditional=None):
         x = self.conv1(x)

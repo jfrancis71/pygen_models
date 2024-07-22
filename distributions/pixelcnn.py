@@ -3,16 +3,17 @@ from torch import nn
 import pixelcnn_pp.model as pixelcnn_model
 import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen.layers.independent_quantized_distribution as ql
+from pygen_models.neural_nets import simple_pixelcnn_net
 
 
-class _PixelCNN(nn.Module):
+class PixelCNN(nn.Module):
     def __init__(self, pixelcnn_net, event_shape, layer, params):
         super().__init__()
         if len(event_shape) != 3:
             raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
         self.event_shape = event_shape
         self.layer = layer
-        if params is None or len(params.shape)==3:
+        if params is None or len(params.shape) == 3:
             self.batch_shape = []
         else:
             self.batch_shape = params.shape[0]
@@ -68,42 +69,38 @@ class _PixelCNN(nn.Module):
         return sample
 
 
-class PixelCNNBernoulliDistribution(_PixelCNN):
+def make_bernoulli_base_distribution():
+    return lambda event_shape: bernoulli_layer.IndependentBernoulli(event_shape=event_shape)
+
+
+def make_quantized_base_distribution():
+    return lambda event_shape: ql.IndependentQuantizedDistribution(event_shape=event_shape)
+
+
+def make_pixelcnn_net(num_resnet=3):
+    def _fn(input_channels, output_channels):
+        return pixelcnn_model.PixelCNN(nr_resnet=num_resnet, nr_filters=160,
+            input_channels=input_channels, nr_params=output_channels, nr_conditional=None)
+    return _fn
+
+
+def make_simple_pixelcnn_net():
+    def _fn(input_channels, output_channels):
+        return simple_pixelcnn_net.SimplePixelCNNNet(input_channels=input_channels, output_channels=output_channels,
+            num_conditional=None)
+    return _fn
+
+
+def make_pixelcnn(base_distribution, pixelcnn_net, event_shape):
+    """makes a PixelCNN distribution
+    >>> dist = make_pixelcnn(make_bernoulli_base_distribution(), make_simple_pixelcnn_net(), event_shape=[2, 12, 12])
+    >>> dist.sample().shape
+    torch.Size([2, 12, 12])
     """
-    >>> bern_dist = PixelCNNBernoulliDistribution([1, 4, 4], nr_resnet=1)
-    >>> bern_dist.sample().shape
-    torch.Size([1, 4, 4])
-    >>> bern_dist.sample(sample_shape=[3]).shape
-    torch.Size([3, 1, 4, 4])
-    """
-    def __init__(self, event_shape, nr_resnet=3):
-        """event_shape is of form [C, Y, X]"""
-        if len(event_shape) != 3:
-            raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
-        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1])
-        super().__init__(
-            pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                input_channels=event_shape[0],
-                nr_params=base_layer.params_size(), nr_conditional=None),
-            event_shape,
-            base_layer,
-            None)
+    base_layer = base_distribution(event_shape[:1])
+    return PixelCNN(pixelcnn_net(input_channels=event_shape[0], output_channels=base_layer.params_size()), event_shape,
+        base_layer, None)
 
 
-class PixelCNNQuantizedDistribution(_PixelCNN):
-    def __init__(self, event_shape, nr_resnet=3):
-        if len(event_shape) != 3:
-            raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
-        base_layer = ql.IndependentQuantizedDistribution(event_shape=event_shape[:1])
-        super().__init__(
-            pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                input_channels=event_shape[0],
-                nr_params=base_layer.params_size(), nr_conditional=None),
-            event_shape,
-            base_layer,
-            None)
-
-
-if __name__ == '__main__':
-    import doctest
-    doctest.testmod()
+import doctest
+doctest.testmod()

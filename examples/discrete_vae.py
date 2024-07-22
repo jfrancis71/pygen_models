@@ -122,9 +122,9 @@ class VAEReinforce(VAEMultiSample):
         return log_prob + reinforce - reinforce.detach()
 
 
-class VAEReinforceBaseline(VAEMultiSample):
+class VAEReinforceBaseline(VAE):
     def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
+        super().__init__(num_states)
         self.baseline_pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(self.num_states)
         self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
         self.baseline_dist = pixelcnn_dist._PixelCNN(
@@ -132,6 +132,7 @@ class VAEReinforceBaseline(VAEMultiSample):
             [1, 28, 28],
             self.base_layer, None
         )
+        self.num_z_samples = num_z_samples
 
     def reconstruct_log_prob(self, q_dist, x):
         baseline_log_prob = self.baseline_dist.log_prob(x)
@@ -171,7 +172,6 @@ class VAEReinforceGumbel(VAEMultiSample):
 
 
 def tb_vae_reconstruct(tb_writer, dataset):
-
     def cb_tb_vae_reconstruct( training_loop_info):
         dataset_images = torch.stack([dataset[i][0] for i in range(10)])
         z = training_loop_info.trainable.encoder(dataset_images).sample()

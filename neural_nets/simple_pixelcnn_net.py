@@ -26,13 +26,17 @@ class SimplePixelCNNNet(nn.Module):
         super().__init__()
         self.conv1 = MaskedConv2d(input_channels, 32, 1, 1)
         if num_conditional is not None:
-            self.prj1 = nn.Linear(num_conditional, 32*28*28)
+            self.prj1 = nn.Conv2d(num_conditional, 32, kernel_size=1)
         self.conv2 = MaskedConv2d(32, output_channels, 1, 1)
+        self.num_conditional = num_conditional
 
     def forward(self, x, sample=False, conditional=None):
+        if conditional.shape[1] != self.num_conditional:
+            raise RuntimeError("object num_conditional is {self.num_conditional}," +
+                " but conditional passed in {conditional.shape}")
         x = self.conv1(x)
         if conditional is not None:
-            prj = self.prj1(conditional[:,:,0,0]).reshape([-1, 32, 28, 28])
+            prj = self.prj1(conditional)
             x = x + prj
         x = F.relu(x)
         x = self.conv2(x)

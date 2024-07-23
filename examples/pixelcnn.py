@@ -21,20 +21,6 @@ parser.add_argument("--net", default="simple_pixelcnn_net")
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
-if ns.dataset == "mnist":
-    transform = transforms.Compose([transforms.ToTensor(),
-        lambda x: (x > 0.5).float(), train.DevicePlacement()])
-    dataset = datasets.MNIST(ns.datasets_folder, train=True, download=False, transform=transform)
-    event_shape = [1, 28, 28]
-    data_split = [55000, 5000]
-elif ns.dataset == "cifar10":
-    transform = transforms.Compose([transforms.ToTensor(), train.DevicePlacement()])
-    dataset = datasets.CIFAR10(ns.datasets_folder, train=True, download=False, transform=transform)
-    event_shape = [3, 32, 32]
-    data_split = [45000, 5000]
-else:
-    raise RuntimeError(f"{ns.dataset} not recognized.")
-train_dataset, validation_dataset = random_split(dataset, data_split)
 torch.set_default_device(ns.device)
 match ns.net:
     case "simple_pixelcnn_net": net = pixelcnn.make_simple_pixelcnn_net()
@@ -42,13 +28,24 @@ match ns.net:
     case _: raise RuntimeError("{ns.net} net name not recognized.")
 match ns.dataset:
     case "mnist":
+        transform = transforms.Compose([transforms.ToTensor(),
+            lambda x: (x > 0.5).float(), train.DevicePlacement()])
+        dataset = datasets.MNIST(ns.datasets_folder, train=True, download=False, transform=transform)
+        data_split = [55000, 5000]
+        event_shape = [1, 28, 28]
         image_distribution = pixelcnn.make_pixelcnn(
             pixelcnn.make_bernoulli_base_distribution(), net, event_shape=[1, 28, 28])
     case "cifar10":
+        transform = transforms.Compose([transforms.ToTensor(), train.DevicePlacement()])
+        dataset = datasets.CIFAR10(ns.datasets_folder, train=True, download=False, transform=transform)
+        data_split = [45000, 5000]
+        event_shape = [3, 32, 32]
         image_distribution = pixelcnn.make_pixelcnn(
             pixelcnn.make_quantized_base_distribution(), net, event_shape=[3, 32, 32])
     case _:
         raise RuntimeError("dataset {ns.dataset} not recognized.")
+train_dataset, validation_dataset = random_split(dataset, data_split,
+    generator=torch.Generator(device=torch.get_default_device()))
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
     pygen_models_callbacks.tb_sample_images(tb_writer, "generated_images"),

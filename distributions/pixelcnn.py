@@ -93,6 +93,7 @@ def make_simple_pixelcnn_net():
 
 def make_pixelcnn(base_distribution, pixelcnn_net, event_shape):
     """makes a PixelCNN distribution
+
     >>> dist = make_pixelcnn(make_bernoulli_base_distribution(), make_simple_pixelcnn_net(), event_shape=[2, 12, 12])
     >>> dist.sample().shape
     torch.Size([2, 12, 12])

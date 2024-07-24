@@ -15,9 +15,9 @@ import torchvision
 from torchvision.utils import make_grid
 from pygen.train import callbacks
 from pygen.neural_nets import classifier_net
-import pygen.layers.categorical as layer_categorical
 import pygen.train.train as train
 import pygen_models.layers.pixelcnn as pixelcnn_layer
+import pygen_models.layers.one_hot_categorical as layer_one_hot_categorical
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.train.train as pygen_models_train
 
@@ -26,7 +26,7 @@ class VAE(nn.Module):
     def __init__(self, num_states):
         super().__init__()
         self.num_states = num_states
-        self.encoder = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), layer_categorical.Categorical())
+        self.encoder = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), layer_one_hot_categorical.OneHotCategorical())
         intermediate_channels = 3
         net = pixelcnn_layer.make_simple_pixelcnn_net()
         conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
@@ -39,7 +39,6 @@ class VAE(nn.Module):
     def kl_div(self, encoder_dist):
         kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - self.pz().logits), axis=1)
         return kl_div
-
 
     def log_prob(self, x):
         return self.elbo(x)[0]
@@ -63,15 +62,15 @@ class VAE(nn.Module):
 class VAEAnalytic(VAE):
     def __init__(self, num_states):
         super().__init__(num_states)
+        self.identity_matrix = torch.eye(num_states).float()
 
     def reconstruct_log_prob(self, encoder_dist, x):
         batch_size = x.shape[0]
-        log_prob1 = torch.stack([self.decoder(
-            nn.functional.one_hot(
-                torch.tensor(z), self.num_states).unsqueeze(0).repeat(batch_size, 1).float()).log_prob(x)
+        reconstruct_log_prob_z = torch.stack([
+            self.decoder(self.identity_matrix[z].unsqueeze(0).repeat(batch_size, 1)).log_prob(x)
             for z in range(self.num_states)], dim=1)
-        arr = encoder_dist.probs * log_prob1
-        log_prob = torch.sum(arr, axis=1)
+        joint_z = encoder_dist.probs * reconstruct_log_prob_z
+        log_prob = torch.sum(joint_z, axis=1)
         return log_prob
 
 
@@ -92,11 +91,9 @@ class VAEUniform(VAEMultiSample):
 
     def sample_reconstruct_log_prob(self, encoder_dist, x):
         batch_size = x.shape[0]
-        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states])).sample()
-        encode = torch.nn.functional.one_hot(z, self.num_states).float()
-        decode = self.decoder(encode)
-        log_prob = decode.log_prob(x)
-        importance_sample = self.num_states * encoder_dist.probs[torch.arange(encoder_dist.probs.size(0)), z] * log_prob
+        z = torch.distributions.one_hot_categorical.OneHotCategorical(logits=torch.zeros([batch_size, self.num_states])).sample()
+        reconstruct_log_prob = self.decoder(z).log_prob(x)
+        importance_sample = self.num_states * encoder_dist.log_prob(z).exp() * reconstruct_log_prob
         return importance_sample
 
 
@@ -106,12 +103,9 @@ class VAEReinforce(VAEMultiSample):
 
     def sample_reconstruct_log_prob(self, encoder_dist, x):
         z = encoder_dist.sample()
-        encode = torch.nn.functional.one_hot(z, self.num_states).float()
-        decode = self.decoder(encode)
-        log_prob = decode.log_prob(x)
-        log_encoder = encoder_dist.logits
-        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * log_prob.detach()
-        return log_prob + reinforce - reinforce.detach()
+        reconstruct_log_prob = self.decoder(z).log_prob(x)
+        reinforce = encoder_dist.log_prob(z) * reconstruct_log_prob.detach()
+        return reconstruct_log_prob + reinforce - reinforce.detach()
 
 
 class VAEReinforceBaseline(VAE):
@@ -130,44 +124,38 @@ class VAEReinforceBaseline(VAE):
 
     def sample_reconstruct_log_prob(self, encoder_dist, x, baseline_log_prob):
         z = encoder_dist.sample()
-        encode = torch.nn.functional.one_hot(z, self.num_states).float()
-        decode = self.decoder(encode)
-        log_prob = decode.log_prob(x)
-        log_encoder = encoder_dist.logits
-        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * (log_prob.detach()-baseline_log_prob.detach())
-        return log_prob + reinforce - reinforce.detach()
+        reconstruct_log_prob = self.decoder(z).log_prob(x)
+        reinforce = encoder_dist.log_prob(z) * (reconstruct_log_prob.detach()-baseline_log_prob.detach())
+        return reconstruct_log_prob + reinforce - reinforce.detach()
 
 
 class VAEReinforceGumbel(VAEMultiSample):
     def __init__(self, num_states, num_z_samples):
         super().__init__(num_states, num_z_samples)
-        self.gumbel = torch.distributions.gumbel.Gumbel(torch.tensor(0.0), torch.tensor(1.0))
+        self.gumbel_dist = torch.distributions.gumbel.Gumbel(torch.tensor(0.0), torch.tensor(1.0))
 
     def sample_reconstruct_log_prob(self, encoder_dist, x):
         z = encoder_dist.sample()
-        encode_H = torch.nn.functional.one_hot(z, self.num_states).float()
-        decode_H = self.decoder(encode_H)
-        log_prob_H = decode_H.log_prob(x)
-        gumbels = torch.distributions.gumbel.Gumbel(torch.tensor(0.0), torch.tensor(1.0)).sample(encoder_dist.probs.shape)
+        reconstruct_log_prob = self.decoder(z).log_prob(x)
+        gumbels = self.gumbel_dist.sample(encoder_dist.probs.shape)
         encode_h = torch.softmax(encoder_dist.probs + gumbels, dim=-1)
         with torch.no_grad():
             decode_h = self.decoder(encode_h)
         log_prob_h = decode_h.log_prob(x)
-        log_encoder = encoder_dist.logits
-        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * (log_prob_H.detach()-log_prob_h)
+        reinforce = encoder_dist.log_prob(z) * (reconstruct_log_prob.detach()-log_prob_h)
         reparam = log_prob_h
-        return log_prob_H + reinforce - reinforce.detach() + reparam - reparam.detach()
+        return reconstruct_log_prob + reinforce - reinforce.detach() + reparam - reparam.detach()
 
 
 def tb_vae_reconstruct(tb_writer, dataset):
-    def cb_tb_vae_reconstruct( training_loop_info):
+    def _fn( training_loop_info):
         dataset_images = torch.stack([dataset[i][0] for i in range(10)])
         z = training_loop_info.trainable.encoder(dataset_images).sample()
-        reconstruct_images = training_loop_info.trainable.decoder(nn.functional.one_hot(z, training_loop_info.trainable.num_states).float()).sample()
+        reconstruct_images = training_loop_info.trainable.decoder(z).sample()
         imglist = torch.cat([dataset_images, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
         tb_writer.add_image("reconstruct_image", grid_image, training_loop_info.epoch_num)
-    return cb_tb_vae_reconstruct
+    return _fn
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Discrete VAE')

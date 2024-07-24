@@ -31,9 +31,13 @@ class SimplePixelCNNNet(nn.Module):
         self.num_conditional = num_conditional
 
     def forward(self, x, sample=False, conditional=None):
-        if conditional.shape[1] != self.num_conditional:
-            raise RuntimeError("object num_conditional is {self.num_conditional}," +
-                " but conditional passed in {conditional.shape}")
+        if self.num_conditional is None:
+            if conditional is not None:
+                raise RuntimeError("self.num_conditional is {self.num_conditional}), but passed in conditional is {conditional}")
+        else:
+            if conditional.shape[1] != self.num_conditional:
+                raise RuntimeError("object num_conditional is {self.num_conditional}," +
+                    " but conditional passed in {conditional.shape}")
         x = self.conv1(x)
         if conditional is not None:
             prj = self.prj1(conditional)

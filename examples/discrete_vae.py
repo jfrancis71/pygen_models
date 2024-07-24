@@ -14,19 +14,10 @@ from torchvision.utils import make_grid
 from pygen.train import callbacks
 from pygen.neural_nets import classifier_net
 import pygen.layers.categorical as layer_categorical
-import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen.train.train as train
 import pygen_models.layers.pixelcnn as pixelcnn_layer
-from pygen_models.neural_nets import simple_pixel_cnn_net
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.train.train as pygen_models_train
-
-
-class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
-    def __init__(self, num_conditional):
-        pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(num_conditional)
-        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-        super().__init__(pixelcnn_net, [1, 28, 28], base_layer, num_conditional)
 
 
 class VAE(nn.Module):
@@ -34,7 +25,10 @@ class VAE(nn.Module):
         super().__init__()
         self.num_states = num_states
         self.encoder = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), layer_categorical.Categorical())
-        self.decoder = LayerPixelCNN(self.num_states)
+        intermediate_channels = 3
+        net = pixelcnn_layer.make_simple_pixelcnn_net()
+        conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
+        self.decoder = nn.Sequential(pixelcnn_layer.SpatialExpand(num_states, intermediate_channels, [28, 28]), conditional_sp_distribution)
         self.pz_logits = torch.zeros([self.num_states])
 
     def pz(self):
@@ -125,13 +119,9 @@ class VAEReinforce(VAEMultiSample):
 class VAEReinforceBaseline(VAE):
     def __init__(self, num_states, num_z_samples):
         super().__init__(num_states)
-        self.baseline_pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(self.num_states)
-        self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-        self.baseline_dist = pixelcnn_dist._PixelCNN(
-            self.baseline_pixelcnn_net,
-            [1, 28, 28],
-            self.base_layer, None
-        )
+        net = pixelcnn_dist.make_simple_pixelcnn_net()
+        self.baseline_dist = pixelcnn_dist.make_pixelcnn(pixelcnn_dist.make_bernoulli_base_distribution(), net,
+            event_shape=[1, 28, 28])
         self.num_z_samples = num_z_samples
 
     def reconstruct_log_prob(self, q_dist, x):

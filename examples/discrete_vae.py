@@ -1,5 +1,7 @@
 """Simple Discrete VAE with just one categorical variable for training on MNIST.
 Provides analytic, uniform and reinforce methods for computing gradient on reconstruction.
+
+Results default params, validation epoch: (Analytic -93.2, Uniform -111.3, ReinforceBaseline -94.25, Gumbel -95.77)
 """
 
 
@@ -38,10 +40,6 @@ class VAE(nn.Module):
         kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - self.pz().logits), axis=1)
         return kl_div
 
-    def epoch_regularizer_penalty(self, batch):
-        encoder_dist = self.encoder(batch[0])
-        reg = -torch.sum(encoder_dist.logits, axis=1)
-        return reg.mean()
 
     def log_prob(self, x):
         return self.elbo(x)[0]
@@ -212,4 +210,4 @@ epoch_end_callbacks = callbacks.callback_compose([
 ])
 train.train(digit_distribution, train_dataset, pygen_models_train.vae_trainer,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=True)
+    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=False)

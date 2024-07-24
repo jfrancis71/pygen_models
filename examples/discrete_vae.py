@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import random_split
-from torch.distributions.categorical import Categorical
+from torch.distributions.one_hot_categorical import OneHotCategorical
 import torchvision
 from torchvision.utils import make_grid
 from pygen.train import callbacks
@@ -34,7 +34,7 @@ class VAE(nn.Module):
         self.pz_logits = torch.zeros([self.num_states])
 
     def pz(self):
-        return Categorical(logits=self.pz_logits)
+        return OneHotCategorical(logits=self.pz_logits)
 
     def kl_div(self, encoder_dist):
         kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - self.pz().logits), axis=1)
@@ -51,8 +51,7 @@ class VAE(nn.Module):
 
     def sample(self, batch_size):
         z = self.pz().sample(batch_size)
-        encode = torch.nn.functional.one_hot(z, self.num_states).float()
-        decode = self.decoder(encode)
+        decode = self.decoder(z)
         return decode.sample()
 
     def forward(self, z):

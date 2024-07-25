@@ -146,14 +146,13 @@ class VAEReinforceGumbel(VAEMultiSample):
         return reconstruct_log_prob + reinforce - reinforce.detach() + reparam - reparam.detach()
 
 
-def tb_vae_reconstruct(tb_writer, dataset):
-    def _fn( training_loop_info):
-        dataset_images = torch.stack([dataset[i][0] for i in range(10)])
-        z = training_loop_info.trainable.encoder(dataset_images).sample()
-        reconstruct_images = training_loop_info.trainable.decoder(z).sample()
-        imglist = torch.cat([dataset_images, reconstruct_images], dim=0)
+def tb_vae_reconstruct(tb_writer, images):
+    def _fn(trainer_state):
+        z = trainer_state.trainable.encoder(images).sample()
+        reconstruct_images = trainer_state.trainable.decoder(z).sample()
+        imglist = torch.cat([images, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
-        tb_writer.add_image("reconstruct_image", grid_image, training_loop_info.epoch_num)
+        tb_writer.add_image("reconstruct_image", grid_image, trainer_state.epoch_num)
     return _fn
 
 
@@ -188,12 +187,13 @@ match ns.mode:
     case _:
         raise RuntimeError(f"mode {ns.mode} not recognised.")
 
+example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
     callbacks.tb_conditional_images(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
-    tb_vae_reconstruct(tb_writer, validation_dataset)
+    tb_vae_reconstruct(tb_writer, example_valid_images)
 ])
 train.train(digit_distribution, train_dataset, pygen_models_train.vae_trainer,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),

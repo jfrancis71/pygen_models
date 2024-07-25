@@ -12,12 +12,12 @@ def tb_sample_images(tb_writer, tb_name):
     >>> trainer = type('TrainingLoopInfo', (object,), {'trainable': distribution})()
     >>> callback(trainer)
     """
-    def cb_tb_sample_images(training_loop_info):
+    def _fn(training_loop_info):
         imglist = training_loop_info.trainable.sample([16])
         grid_image = make_grid(imglist, padding=10, nrow=4, value_range=(0.0, 1.0))
         if tb_writer is not None:
             tb_writer.add_image(tb_name, grid_image, training_loop_info.epoch_num)
-    return cb_tb_sample_images
+    return _fn
 
 
 class TBSequenceImageCallback:

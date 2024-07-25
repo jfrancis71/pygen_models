@@ -32,6 +32,7 @@ class VAE(nn.Module):
         conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
         self.decoder = nn.Sequential(pixelcnn_layer.SpatialExpand(num_states, intermediate_channels, [28, 28]), conditional_sp_distribution)
         self.pz_logits = torch.zeros([self.num_states])
+        self.identity_matrix = torch.eye(num_states).float()
 
     def pz(self):
         return OneHotCategorical(logits=self.pz_logits)
@@ -54,6 +55,21 @@ class VAE(nn.Module):
         decode = self.decoder(z)
         return decode.sample()
 
+    def pz_given_x(self, x):  # Warning, this is expensive. linear in self.num_states. Feasible if num_states small.
+        batch_size = x.shape[0]
+        reconstruct_log_prob_z = torch.stack([
+            self.decoder(self.identity_matrix[z].unsqueeze(0).repeat(batch_size, 1)).log_prob(x)
+            for z in range(self.num_states)], dim=1)
+        joint_z = self.pz().logits + reconstruct_log_prob_z
+        pz_given_x = torch.distributions.categorical.Categorical(logits=joint_z).logits
+        return pz_given_x
+
+    def kl_gap(self, x):  # Warning, this is expensive. linear in self.num_states. Feasible if num_states small.
+        encoder_dist = self.encoder(x)
+        pz_given_x = self.pz_given_x(x)
+        kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - pz_given_x), axis=1)
+        return kl_div
+
     def forward(self, z):
         return self.decoder(z)
 
@@ -61,15 +77,14 @@ class VAE(nn.Module):
 class VAEAnalytic(VAE):
     def __init__(self, num_states):
         super().__init__(num_states)
-        self.identity_matrix = torch.eye(num_states).float()
 
     def reconstruct_log_prob(self, encoder_dist, x):
         batch_size = x.shape[0]
         reconstruct_log_prob_z = torch.stack([
             self.decoder(self.identity_matrix[z].unsqueeze(0).repeat(batch_size, 1)).log_prob(x)
             for z in range(self.num_states)], dim=1)
-        joint_z = encoder_dist.probs * reconstruct_log_prob_z
-        log_prob = torch.sum(joint_z, axis=1)
+        recon = encoder_dist.probs * reconstruct_log_prob_z
+        log_prob = torch.sum(recon, axis=1)
         return log_prob
 
 
@@ -155,6 +170,14 @@ def tb_vae_reconstruct(tb_writer, images):
         tb_writer.add_image("reconstruct_image", grid_image, trainer_state.epoch_num)
     return _fn
 
+def tb_vae_posteriors(tb_writer, images):
+    def _fn(trainer_state):
+        qz_x = trainer_state.trainable.encoder(images).probs
+        tb_writer.add_image("example_qz_x", qz_x.detach().unsqueeze(0).cpu().numpy(), trainer_state.epoch_num)
+        pz_x = trainer_state.trainable.pz_given_x(images).exp()
+        tb_writer.add_image("example_pz_x", pz_x.detach().unsqueeze(0).cpu().numpy(), trainer_state.epoch_num)
+    return _fn
+
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Discrete VAE')
 parser.add_argument("--datasets_folder", default="~/datasets")
@@ -165,6 +188,8 @@ parser.add_argument("--mode", default="analytic")
 parser.add_argument("--num_states", default=10, type=int)
 parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
+parser.add_argument("--log_kl_gap", action="store_true")
+parser.add_argument("--log_posteriors", action="store_true")
 ns = parser.parse_args()
 
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(), train.DevicePlacement()])
@@ -189,12 +214,15 @@ match ns.mode:
 
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)
-epoch_end_callbacks = callbacks.callback_compose([
+epoch_end_callbacks_list = [
     callbacks.tb_conditional_images(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
     tb_vae_reconstruct(tb_writer, example_valid_images)
-])
-train.train(digit_distribution, train_dataset, pygen_models_train.vae_trainer,
+    ]
+if ns.log_posteriors:
+    epoch_end_callbacks_list.append(tb_vae_posteriors(tb_writer, example_valid_images))
+epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
+train.train(digit_distribution, train_dataset, pygen_models_train.vae_objective(ns.log_kl_gap),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=False)

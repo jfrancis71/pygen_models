@@ -29,6 +29,7 @@ $$
 E_{z \sim q_\phi(z | x)} [Log(p_\theta(x | z))]  = E_{z \sim q_\phi(z|x)} [Log(p_\theta(x | z) \nabla_\phi Log(q_\phi(z|x))]
 $$
 
+see [https://github.com/jfrancis71/pygen_models/blob/documentation/documentation/reinforce.md]
 
 ## Reinforce with Baseline
 

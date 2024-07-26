@@ -26,64 +26,63 @@ class VAE(nn.Module):
     def __init__(self, num_states):
         super().__init__()
         self.num_states = num_states
-        self.encoder = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), layer_one_hot_categorical.OneHotCategorical())
+        self.q_z_given_x = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), layer_one_hot_categorical.OneHotCategorical())
         intermediate_channels = 3
         net = pixelcnn_layer.make_simple_pixelcnn_net()
         conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
-        self.decoder = nn.Sequential(pixelcnn_layer.SpatialExpand(num_states, intermediate_channels, [28, 28]), conditional_sp_distribution)
+        self.p_x_given_z = nn.Sequential(pixelcnn_layer.SpatialExpand(num_states, intermediate_channels, [28, 28]), conditional_sp_distribution)
         self.pz_logits = torch.zeros([self.num_states])
         self.identity_matrix = torch.eye(num_states).float()
 
-    def pz(self):
+    def p_z(self):
         return OneHotCategorical(logits=self.pz_logits)
 
-    def kl_div(self, encoder_dist):
-        kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - self.pz().logits), axis=1)
+    def kl_div(self, q_z_given_x):
+        kl_div = torch.sum(q_z_given_x.probs * (q_z_given_x.logits - self.p_z().logits), axis=1)
         return kl_div
 
     def log_prob(self, x):
         return self.elbo(x)[0]
 
     def elbo(self, x):
-        encoder_dist = self.encoder(x)
-        log_prob = self.reconstruct_log_prob(encoder_dist, x)
-        kl_div = self.kl_div(encoder_dist)
+        q_z_given_x = self.q_z_given_x(x)
+        log_prob = self.reconstruct_log_prob(q_z_given_x, x)
+        kl_div = self.kl_div(q_z_given_x)
         return log_prob - kl_div, log_prob.detach(), kl_div.detach()
 
     def sample(self, batch_size):
-        z = self.pz().sample(batch_size)
-        decode = self.decoder(z)
+        z = self.p_z().sample(batch_size)
+        decode = self.p_x_given_z(z)
         return decode.sample()
 
-    def pz_given_x(self, x):  # Warning, this is expensive. linear in self.num_states. Feasible if num_states small.
+    def p_z_given_x(self, x):  # Warning, this is expensive. linear in self.num_states. Feasible if num_states small.
         batch_size = x.shape[0]
         reconstruct_log_prob_z = torch.stack([
-            self.decoder(self.identity_matrix[z].unsqueeze(0).repeat(batch_size, 1)).log_prob(x)
+            self.p_x_given_z(self.identity_matrix[z].unsqueeze(0).repeat(batch_size, 1)).log_prob(x)
             for z in range(self.num_states)], dim=1)
-        joint_z = self.pz().logits + reconstruct_log_prob_z
-        pz_given_x = torch.distributions.categorical.Categorical(logits=joint_z).logits
-        return pz_given_x
+        joint_z = self.p_z().logits + reconstruct_log_prob_z
+        return OneHotCategorical(logits=joint_z)
 
     def kl_gap(self, x):  # Warning, this is expensive. linear in self.num_states. Feasible if num_states small.
-        encoder_dist = self.encoder(x)
-        pz_given_x = self.pz_given_x(x)
-        kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - pz_given_x), axis=1)
+        q_z_given_x = self.q_z_given_x(x)
+        p_z_given_x = self.p_z_given_x(x)
+        kl_div = torch.sum(q_z_given_x.probs * (q_z_given_x.logits - p_z_given_x.logits), axis=1)
         return kl_div
 
     def forward(self, z):
-        return self.decoder(z)
+        return self.p_x_given_z(z)
 
 
 class VAEAnalytic(VAE):
     def __init__(self, num_states):
         super().__init__(num_states)
 
-    def reconstruct_log_prob(self, encoder_dist, x):
+    def reconstruct_log_prob(self, q_z_given_x, x):
         batch_size = x.shape[0]
         reconstruct_log_prob_z = torch.stack([
-            self.decoder(self.identity_matrix[z].unsqueeze(0).repeat(batch_size, 1)).log_prob(x)
+            self.p_x_given_z(self.identity_matrix[z].unsqueeze(0).repeat(batch_size, 1)).log_prob(x)
             for z in range(self.num_states)], dim=1)
-        recon = encoder_dist.probs * reconstruct_log_prob_z
+        recon = q_z_given_x.probs * reconstruct_log_prob_z
         log_prob = torch.sum(recon, axis=1)
         return log_prob
 
@@ -93,8 +92,8 @@ class VAEMultiSample(VAE):
         super().__init__(num_states)
         self.num_z_samples = num_z_samples
 
-    def reconstruct_log_prob(self, q_dist, x):
-        log_probs = [self.sample_reconstruct_log_prob(q_dist, x) for _ in range(self.num_z_samples)]
+    def reconstruct_log_prob(self, q_z_given_x, x):
+        log_probs = [self.sample_reconstruct_log_prob(q_z_given_x, x) for _ in range(self.num_z_samples)]
         log_prob = torch.mean(torch.stack(log_probs), dim=0)
         return log_prob
 
@@ -103,11 +102,11 @@ class VAEUniform(VAEMultiSample):
     def __init__(self, num_states, num_z_samples):
         super().__init__(num_states, num_z_samples)
 
-    def sample_reconstruct_log_prob(self, encoder_dist, x):
+    def sample_reconstruct_log_prob(self, q_z_given_x, x):
         batch_size = x.shape[0]
-        z = torch.distributions.one_hot_categorical.OneHotCategorical(logits=torch.zeros([batch_size, self.num_states])).sample()
-        reconstruct_log_prob = self.decoder(z).log_prob(x)
-        importance_sample = self.num_states * encoder_dist.log_prob(z).exp() * reconstruct_log_prob
+        z = OneHotCategorical(logits=torch.zeros([batch_size, self.num_states])).sample()
+        reconstruct_log_prob = self.p_x_given_z(z).log_prob(x)
+        importance_sample = self.num_states * q_z_given_x.log_prob(z).exp() * reconstruct_log_prob
         return importance_sample
 
 
@@ -115,10 +114,10 @@ class VAEReinforce(VAEMultiSample):
     def __init__(self, num_states, num_z_samples):
         super().__init__(num_states, num_z_samples)
 
-    def sample_reconstruct_log_prob(self, encoder_dist, x):
-        z = encoder_dist.sample()
-        reconstruct_log_prob = self.decoder(z).log_prob(x)
-        reinforce = encoder_dist.log_prob(z) * reconstruct_log_prob.detach()
+    def sample_reconstruct_log_prob(self, q_z_given_x, x):
+        z = q_z_given_x.sample()
+        reconstruct_log_prob = self.p_x_given_z(z).log_prob(x)
+        reinforce = q_z_given_x.log_prob(z) * reconstruct_log_prob.detach()
         return reconstruct_log_prob + reinforce - reinforce.detach()
 
 
@@ -130,16 +129,16 @@ class VAEReinforceBaseline(VAE):
             event_shape=[1, 28, 28])
         self.num_z_samples = num_z_samples
 
-    def reconstruct_log_prob(self, q_dist, x):
+    def reconstruct_log_prob(self, q_z_given_x, x):
         baseline_log_prob = self.baseline_dist.log_prob(x)
-        log_probs = [self.sample_reconstruct_log_prob(q_dist, x, baseline_log_prob) for _ in range(self.num_z_samples)]
+        log_probs = [self.sample_reconstruct_log_prob(q_z_given_x, x, baseline_log_prob) for _ in range(self.num_z_samples)]
         log_prob = torch.mean(torch.stack(log_probs), dim=0)
         return log_prob + baseline_log_prob - baseline_log_prob.detach()
 
-    def sample_reconstruct_log_prob(self, encoder_dist, x, baseline_log_prob):
-        z = encoder_dist.sample()
-        reconstruct_log_prob = self.decoder(z).log_prob(x)
-        reinforce = encoder_dist.log_prob(z) * (reconstruct_log_prob.detach()-baseline_log_prob.detach())
+    def sample_reconstruct_log_prob(self, q_z_given_x, x, baseline_log_prob):
+        z = q_z_given_x.sample()
+        reconstruct_log_prob = self.p_x_given_z(z).log_prob(x)
+        reinforce = q_z_given_x.log_prob(z) * (reconstruct_log_prob.detach()-baseline_log_prob.detach())
         return reconstruct_log_prob + reinforce - reinforce.detach()
 
 
@@ -148,23 +147,23 @@ class VAEReinforceGumbel(VAEMultiSample):
         super().__init__(num_states, num_z_samples)
         self.gumbel_dist = torch.distributions.gumbel.Gumbel(torch.tensor(0.0), torch.tensor(1.0))
 
-    def sample_reconstruct_log_prob(self, encoder_dist, x):
-        z = encoder_dist.sample()
-        reconstruct_log_prob = self.decoder(z).log_prob(x)
-        gumbels = self.gumbel_dist.sample(encoder_dist.probs.shape)
-        encode_h = torch.softmax(encoder_dist.probs + gumbels, dim=-1)
+    def sample_reconstruct_log_prob(self, q_z_given_x, x):
+        z = q_z_given_x.sample()
+        reconstruct_log_prob = self.p_x_given_z(z).log_prob(x)
+        gumbels = self.gumbel_dist.sample(q_z_given_x.probs.shape)
+        encode_h = torch.softmax(q_z_given_x.probs + gumbels, dim=-1)
         with torch.no_grad():
-            decode_h = self.decoder(encode_h)
+            decode_h = self.p_x_given_z(encode_h)
         log_prob_h = decode_h.log_prob(x)
-        reinforce = encoder_dist.log_prob(z) * (reconstruct_log_prob.detach()-log_prob_h)
+        reinforce = q_z_given_x.log_prob(z) * (reconstruct_log_prob.detach()-log_prob_h)
         reparam = log_prob_h
         return reconstruct_log_prob + reinforce - reinforce.detach() + reparam - reparam.detach()
 
 
 def tb_vae_reconstruct(tb_writer, images):
     def _fn(trainer_state):
-        z = trainer_state.trainable.encoder(images).sample()
-        reconstruct_images = trainer_state.trainable.decoder(z).sample()
+        z = trainer_state.trainable.q_z_given_x(images).sample()
+        reconstruct_images = trainer_state.trainable.p_x_given_z(z).sample()
         imglist = torch.cat([images, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
         tb_writer.add_image("reconstruct_image", grid_image, trainer_state.epoch_num)
@@ -172,10 +171,10 @@ def tb_vae_reconstruct(tb_writer, images):
 
 def tb_vae_posteriors(tb_writer, images):
     def _fn(trainer_state):
-        qz_x = trainer_state.trainable.encoder(images).probs
-        tb_writer.add_image("example_qz_x", qz_x.detach().unsqueeze(0).cpu().numpy(), trainer_state.epoch_num)
-        pz_x = trainer_state.trainable.pz_given_x(images).exp()
-        tb_writer.add_image("example_pz_x", pz_x.detach().unsqueeze(0).cpu().numpy(), trainer_state.epoch_num)
+        probs_q_z_given_x = trainer_state.trainable.q_z_given_x(images).probs.detach()
+        tb_writer.add_image("example_qz_x", probs_q_z_given_x.unsqueeze(0).cpu().numpy(), trainer_state.epoch_num)
+        probs_p_z_given_x = trainer_state.trainable.p_z_given_x(images).probs.detach()
+        tb_writer.add_image("example_pz_x", probs_p_z_given_x.unsqueeze(0).cpu().numpy(), trainer_state.epoch_num)
     return _fn
 
 

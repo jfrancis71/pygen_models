@@ -21,7 +21,20 @@ class MaskedConv2d(nn.Module):
 
 
 class SimplePixelCNNNet(nn.Module):
-    """A Simple PixelCNN style neural network."""
+    """Layer which accepts a tensor and returns a Categorical probability distribution.
+
+    Example::
+
+        >>> simple_pixel_cnn_net = SimplePixelCNNNet(3, 5, None)
+        >>> simple_pixel_cnn_net(torch.rand([7, 3, 8, 8])).shape
+        torch.Size([7, 5, 8, 8])
+        >>> conditioned_net = SimplePixelCNNNet(3, 5, 9)
+        >>> input_tensor = torch.rand([7, 3, 8, 8])
+        >>> conditioned_tensor = torch.rand([7, 9, 8, 8])
+        >>> conditioned_net(input_tensor, False, conditioned_tensor).shape
+        torch.Size([7, 5, 8, 8])
+    """
+
     def __init__(self, input_channels, output_channels, num_conditional):
         super().__init__()
         self.conv1 = MaskedConv2d(input_channels, 32, 1, 1)
@@ -45,3 +58,7 @@ class SimplePixelCNNNet(nn.Module):
         x = F.relu(x)
         x = self.conv2(x)
         return x
+
+
+import doctest
+doctest.testmod()

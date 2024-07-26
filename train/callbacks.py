@@ -44,3 +44,7 @@ class TBSequenceTransitionMatrixCallback:
     def __call__(self, trainer):
         image = trainer.trainable.state_transition_distribution().probs.detach().unsqueeze(0).cpu().numpy()
         self.tb_writer.add_image(self.tb_name, image, trainer.epoch)
+
+
+import doctest
+doctest.testmod()

@@ -20,11 +20,12 @@ classDiagram
         +sample_reconstruct_log_prob(q(z|x), x)
     }
     class VAE_ReinforceBaseline{
+        +reconstruct_log_prob(q(z|x), x)
         +sample_reconstruct_log_prob(q(z|x), x)
     }
     VAE --> VAE_Analytic
     VAE --> VAE_MultiSample
     VAE_MultiSample --> VAE_Uniform
     VAE_MultiSample --> VAE_Reinforce
-    VAE_MultiSample --> VAE_ReinforceBaseline
+    VAE --> VAE_ReinforceBaseline
 ```

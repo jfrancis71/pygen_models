@@ -31,14 +31,14 @@ class VAE(nn.Module):
         net = pixelcnn_layer.make_simple_pixelcnn_net()
         conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
         self.p_x_given_z = nn.Sequential(pixelcnn_layer.SpatialExpand(num_states, intermediate_channels, [28, 28]), conditional_sp_distribution)
-        self.pz_logits = torch.zeros([self.num_states])
+        self.logits_p_z = torch.zeros([self.num_states])
         self.identity_matrix = torch.eye(num_states).float()
 
     def p_z(self):
-        return OneHotCategorical(logits=self.pz_logits)
+        return OneHotCategorical(logits=self.logits_p_z)
 
-    def kl_div(self, q_z_given_x):
-        kl_div = torch.sum(q_z_given_x.probs * (q_z_given_x.logits - self.p_z().logits), axis=1)
+    def kl_div(self, p, q):
+        kl_div = torch.sum(p.probs * (p.logits - q.logits), axis=-1)
         return kl_div
 
     def log_prob(self, x):
@@ -47,7 +47,7 @@ class VAE(nn.Module):
     def elbo(self, x):
         q_z_given_x = self.q_z_given_x(x)
         log_prob = self.reconstruct_log_prob(q_z_given_x, x)
-        kl_div = self.kl_div(q_z_given_x)
+        kl_div = self.kl_div(q_z_given_x, self.p_z())
         return log_prob - kl_div, log_prob.detach(), kl_div.detach()
 
     def sample(self, batch_size):
@@ -66,7 +66,7 @@ class VAE(nn.Module):
     def kl_gap(self, x):  # Warning, this is expensive. linear in self.num_states. Feasible if num_states small.
         q_z_given_x = self.q_z_given_x(x)
         p_z_given_x = self.p_z_given_x(x)
-        kl_div = torch.sum(q_z_given_x.probs * (q_z_given_x.logits - p_z_given_x.logits), axis=1)
+        kl_div = self.kl_div(q_z_given_x, p_z_given_x)
         return kl_div
 
     def forward(self, z):

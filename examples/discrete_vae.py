@@ -48,7 +48,7 @@ class VAE(nn.Module):
         q_z_given_x = self.q_z_given_x(x)
         log_prob = self.reconstruct_log_prob(q_z_given_x, x)
         kl_div = self.kl_div(q_z_given_x, self.p_z())
-        return log_prob - kl_div, log_prob.detach(), kl_div.detach()
+        return log_prob - kl_div, log_prob.detach(), kl_div.detach(), q_z_given_x
 
     def sample(self, batch_size):
         z = self.p_z().sample(batch_size)

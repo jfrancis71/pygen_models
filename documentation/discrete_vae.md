@@ -40,6 +40,8 @@ $$
 where $Log(p_\eta(x))$ is some baseline distribution over p(x).
 
 
+## Discussion
 
-Gumbel Softmax:
+Some discussions around variational autoencoders seems confused as to the purpose. Is it to design a good generative model, or to provide a good latent model of the distribution? These purposes may be in conflict. At heart a variational autoencoder is just a tractable way to train a mixture model. The original purpose was if we have a poor model for p(x) then perhaps a mixture of p(x)'s ie p(x|z) would give rise to a better model. But in this sense the latent code is just patching up the inadequacies of the decoding model. For example if you have a very good decoder p(x|z) there is no need to learn a latent code at all (in fact for the VAE the KL penalty will penalise this).
 
+My conclusions are that a VAE deisgned to be a good generative model may look very different to a VAE designed to produce good latent codes. Perhaps in the latter case alternative approaches that pursue this goal explicitly may be better.

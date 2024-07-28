@@ -57,16 +57,8 @@ x = images, z = latent code
 From equation 1:
 
 $$
-I(x,z) = E_{(x,z) \sim p(x,z)}[log(\frac{p(z|x)}{p(x)})]
+I(x,z) = E_{(x,z) \sim p(x,z)}[log(\frac{p(z|x)}{p(z)})]
 $$
-
-where:
-
-$$
-p(x) = \sum_z p(x|z) p(z)
-$$
-
-This is feasible for small latent code space z.
 
 
 ## References:

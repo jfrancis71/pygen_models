@@ -12,6 +12,16 @@ $$
 = E_{(x,y) \sim p(x,y)}[log(\frac{p(y|x)}{p(y)})] (1)
 $$
 
+Also note (see p.139 Ref 2)
+
+I[X,Y] = H[X] - H[X|Y]
+
+and from p.138
+
+$$
+H[X|Y] = \sum_{x,y} p(x,y) log(\frac{1}{p(x|y)})
+$$
+
 ## Lower Bound:
 
 $$
@@ -72,3 +82,4 @@ $$
 
 On Variational Bounds of Mutual Information (2019), Poole, Ozair, Van den Oord, Alemi, Tucker
 [https://arxiv.org/pdf/1905.06922]
+Information Theory, Inference and Learning Algorithms, David Mackay, 2003.

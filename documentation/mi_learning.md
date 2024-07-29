@@ -48,6 +48,13 @@ $$
 = E_{(x,y) \sim p(x,y)}[log(\frac{q(y|x)}{p(y)})] + E_{x \sim p(x)}[ D_{KL} [p(y|x)||q(y|x))] ]
 $$
 
+$$
+= E_{(x,y) \sim p(x,y)}[log(q(y|x))] + E_{(x,y) \sim p(x,y)}[log(\frac{1}{p(y)})] + E_{x \sim p(x)}[ D_{KL} [p(y|x)||q(y|x))] ]
+$$
+
+$$
+= E_{(x,y) \sim p(x,y)}[log(q(y|x))] + H_{p(y)}[y] + E_{x \sim p(x)}[ D_{KL} [p(y|x)||q(y|x))] ]
+$$
 
 
 ## Strategy:

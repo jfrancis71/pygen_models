@@ -22,7 +22,7 @@ $$
 H[X|Y] = \sum_{x,y} p(x,y) log(\frac{1}{p(x|y)})
 $$
 
-## Lower Bound:
+## Upper Bound:
 
 $$
 = E_{(x,y) \sim p(x,y)}[log(\frac{p(y|x) q(y)}{p(y) q(y)})]
@@ -40,7 +40,7 @@ $$
 = E_{(x,y) \sim p(x,y)}[log(\frac{p(y|x)}{q(y)})] - D_{KL}[q(y)||p(y)]
 $$
 
-## Upper Bound:
+## Lower Bound:
 
 $$
 = E_{(x,y) \sim p(x,y)}[log(\frac{p(y|x) q(y|x)}{p(y) q(y|x)})]

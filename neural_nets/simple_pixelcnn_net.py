@@ -21,9 +21,9 @@ class MaskedConv2d(nn.Module):
 
 
 class SimplePixelCNNNet(nn.Module):
-    """Layer which accepts a tensor and returns a Categorical probability distribution.
+    """A simple PixelCNN style neural network.
 
-    Example::
+    Example:
 
         >>> simple_pixel_cnn_net = SimplePixelCNNNet(3, 5, None)
         >>> simple_pixel_cnn_net(torch.rand([7, 3, 8, 8])).shape

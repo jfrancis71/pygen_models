@@ -1,37 +1,33 @@
 import argparse
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.categorical import Categorical
 import torchvision
 import pygen.layers.independent_bernoulli as bernoulli_layer
+import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 from pygen.neural_nets import classifier_net
-import pygen_models.distributions.hmm as hmm
 import pygen_models.layers.pixelcnn as pixelcnn_layer
+import pygen_models.layers.one_hot_categorical as layer_one_hot_categorical
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.distributions.hmm as pygen_hmm
-from pygen_models.neural_nets import simple_pixel_cnn_net
 from pygen_models.datasets import sequential_mnist
-from pygen_models.train.train import VAETrainer
+import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
-
-
-class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
-    def __init__(self, num_conditional):
-        pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(num_conditional)
-        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-        super().__init__(pixelcnn_net, [1, 28, 28], base_layer, num_conditional)
 
 
 class HMMVAE(pygen_hmm.HMM):
     def __init__(self, num_states):
-        observation_model = LayerPixelCNN(ns.num_states)
-        super().__init__(num_states, observation_model)
-        self.q = classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states)
+        conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
+            pixelcnn_dist.make_bernoulli_base_distribution(),
+            pixelcnn_layer.make_simple_pixelcnn_net(), [1, 28, 28], ns.num_states)
+        layer_pixelcnn_bernoulli = nn.Sequential(pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,
+                                                                              [28, 28]), conditional_sp_distribution)
+        super().__init__(num_states, layer_pixelcnn_bernoulli)
+        self.q = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states),
+            layer_one_hot_categorical.OneHotCategorical())
 
     def log_prob(self, x):
         return self.elbo(x)
@@ -42,7 +38,7 @@ class HMMVAE(pygen_hmm.HMM):
             q_dist[:, t] = self.q(x[:, t]).logits
         reconstruct_log_prob = self.reconstruct_log_prob(q_dist, x)
         kl_div = self.kl_div(q_dist)
-        return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div
+        return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div, Categorical(q_dist[0])
 
     def kl_div(self, q_dist):
         kl_div = self.kl_div_cat(Categorical(logits=q_dist[:, 0]), self.prior_state_distribution())
@@ -154,11 +150,11 @@ class HMMReinforceBaseline(HMMMultiSample):
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Sequence HMM')
-parser.add_argument("--datasets_folder", default=".")
+parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
-parser.add_argument("--mode", default="cpu")
+parser.add_argument("--mode", default="analytic")
 parser.add_argument("--num_states", default=10, type=int)
 parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
@@ -185,18 +181,13 @@ match ns.mode:
         raise RuntimeError(f"mode {ns.mode} not recognised.")
 
 tb_writer = SummaryWriter(ns.tb_folder)
-batch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBBatchLogProbCallback(tb_writer, "batch_log_prob"),
-    pygen_models_callbacks.TBBatchVAECallback(tb_writer)
-])
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
-    callbacks.TBDatasetLogProbCallback(tb_writer, "validation_log_prob", validation_dataset),
+    callbacks.tb_conditional_images(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
+    callbacks.tb_epoch_log_metrics(tb_writer),
     pygen_models_callbacks.TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
     pygen_models_callbacks.TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
 ])
-trainer = VAETrainer(
-    mnist_hmm.to(ns.device),
-    train_dataset, max_epoch=ns.max_epoch, batch_end_callback=batch_end_callbacks, epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)
-torch.autograd.set_detect_anomaly(True)
-trainer.train()
+train.train(mnist_hmm, train_dataset, pygen_models_train.vae_objective(False),
+    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
+    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=False)

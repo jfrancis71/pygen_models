@@ -62,7 +62,7 @@ class PixelCNN(nn.Module):
                         conditional=params)[:, :, y, x]
                     pixel_sample = self.layer(logits).sample()
                     sample[:, :, y, x] = pixel_sample
-        if sample_shape is None and params is None:
+        if sample_shape is None and (params is None or len(self.params.shape)==3):
             return sample[0]
         if sample_shape is not None and params is not None:
             return torch.reshape(sample, sample_shape+[self.params.shape[0]]+self.event_shape)

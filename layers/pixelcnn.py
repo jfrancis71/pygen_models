@@ -17,7 +17,7 @@ class PixelCNN(nn.Module):
 
     def forward(self, x):
         batch_shape = x.shape[:-1]
-        if x.shape[1] != self.num_conditional:
+        if x.shape[-3] != self.num_conditional:
             raise RuntimeError(
                 f"input shape {x.shape}, but event_shape has shape {self.event_shape} with num_conditional" +
                     "{self.num_conditional}, " +
@@ -52,6 +52,21 @@ def make_pixelcnn_layer(base_distribution, pixelcnn_net, event_shape, num_condit
 
 
 class SpatialExpand(nn.Module):
+    """Expands a tensor from BxC to BxCxYxX.
+
+    This is a learnable operation which allows for learning both channel and spatial mapping.
+
+    Args:
+        in_channels (int): number of input channels
+        out_channels (int): number of output channels
+        spatial_dims [int,int]: the Y and X spatial size
+
+    Example:
+        >>> input_tensor = torch.zeros([7, 8])
+        >>> spatial_expand = SpatialExpand(8, 12, [4,4])
+        >>> spatial_expand(input_tensor).shape
+        torch.Size([7, 12, 4, 4])
+    """
     def __init__(self, in_channels, out_channels, spatial_dims):
         super().__init__()
         self.expand = nn.Linear(in_channels, out_channels*spatial_dims[0]*spatial_dims[1])
@@ -59,8 +74,8 @@ class SpatialExpand(nn.Module):
         self.out_channels = out_channels
 
     def forward(self, x):
-        batch_size = x.shape[0]
-        x = self.expand(x).reshape(batch_size, self.out_channels, self.spatial_dims[0], self.spatial_dims[1])
+        batch_shape = x.shape[:-1]
+        x = self.expand(x).reshape(batch_shape + torch.Size([self.out_channels, self.spatial_dims[0], self.spatial_dims[1]]))
         return x
 
 

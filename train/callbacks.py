@@ -29,7 +29,7 @@ class TBSequenceImageCallback:
     def __call__(self, trainer_state):
         sample_size = 8
         num_steps = 3
-        imglist = [trainer_state.trainable.sample(num_steps=num_steps) for _ in range(sample_size)]
+        imglist = [trainer_state.trainable.sample() for _ in range(sample_size)]
         imglist = torch.clip(torch.cat(imglist, axis=0), 0.0, 1.0)  # pylint: disable=E1101
         grid_image = torchvision.utils.make_grid(imglist, padding=10, nrow=num_steps)
         self.tb_writer.add_image(self.tb_name, grid_image, trainer_state.epoch_num)

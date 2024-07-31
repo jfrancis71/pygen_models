@@ -18,13 +18,13 @@ import pygen_models.train.callbacks as pygen_models_callbacks
 
 
 class HMMVAE(pygen_hmm.HMM):
-    def __init__(self, num_states):
+    def __init__(self, num_steps, num_states):
         conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
             pixelcnn_dist.make_bernoulli_base_distribution(),
             pixelcnn_layer.make_simple_pixelcnn_net(), [1, 28, 28], ns.num_states)
         layer_pixelcnn_bernoulli = nn.Sequential(pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,
                                                                               [28, 28]), conditional_sp_distribution)
-        super().__init__(num_states, layer_pixelcnn_bernoulli)
+        super().__init__(num_steps, num_states, layer_pixelcnn_bernoulli)
         self.q = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states),
             layer_one_hot_categorical.OneHotCategorical())
 
@@ -59,8 +59,8 @@ class HMMVAE(pygen_hmm.HMM):
 
 
 class HMMAnalytic(HMMVAE):
-    def __init__(self, num_states):
-        super().__init__(num_states)
+    def __init__(self, num_steps, num_states):
+        super().__init__(num_steps, num_states)
 
     def reconstruct_log_prob(self, q_dist, x):
         """encoder_dist is tensor of shape [B, T, N], x has shape [B, T, C, Y, X]"""
@@ -73,8 +73,8 @@ class HMMAnalytic(HMMVAE):
 
 
 class HMMMultiSample(HMMVAE):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states)
+    def __init__(self, num_steps, num_states, num_z_samples):
+        super().__init__(num_steps, num_states)
         self.num_z_samples = num_z_samples
 
     def reconstruct_log_prob(self, q_dist, x):
@@ -84,8 +84,8 @@ class HMMMultiSample(HMMVAE):
 
 
 class HMMUniform(HMMMultiSample):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
+    def __init__(self, num_steps, num_states, num_z_samples):
+        super().__init__(num_steps, num_states, num_z_samples)
 
     def sample_reconstruct_log_prob(self, q_dist, x):  # Using uniform sampling
         batch_size = q_dist.shape[0]
@@ -101,8 +101,8 @@ class HMMUniform(HMMMultiSample):
 
 
 class HMMReinforce(HMMMultiSample):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
+    def __init__(self, num_steps, num_states, num_z_samples):
+        super().__init__(num_steps, num_states, num_z_samples)
 
     def sample_reconstruct_log_prob(self, q_dist, x):
         log_prob = torch.zeros([x.shape[0]], device=self.device())
@@ -117,8 +117,8 @@ class HMMReinforce(HMMMultiSample):
 
 
 class HMMReinforceBaseline(HMMVAE):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states)
+    def __init__(self, num_steps, num_states, num_z_samples):
+        super().__init__(num_steps, num_states)
         net = pixelcnn_dist.make_simple_pixelcnn_net()
         self.baseline_dist = pixelcnn_dist.make_pixelcnn(
             pixelcnn_dist.make_bernoulli_base_distribution(), net, event_shape=[1, 28, 28])
@@ -156,23 +156,27 @@ parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
-transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float()])
+num_steps = 3
+torch.set_default_device(ns.device)
+transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
+    train.DevicePlacement()])
 mnist_dataset = torchvision.datasets.MNIST(
     ns.datasets_folder, train=True, download=False,
     transform=transform)
-train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000])
+train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000],
+    generator=torch.Generator(device=torch.get_default_device()))
 train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, ns.dummy_run)
 validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, ns.dummy_run)
 
 match ns.mode:
     case "analytic":
-        mnist_hmm = HMMAnalytic(ns.num_states)
+        mnist_hmm = HMMAnalytic(num_steps, ns.num_states)
     case "uniform":
-        mnist_hmm = HMMUniform(ns.num_states, ns.num_z_samples)
+        mnist_hmm = HMMUniform(num_steps, ns.num_states, ns.num_z_samples)
     case "reinforce":
-        mnist_hmm = HMMReinforce(ns.num_states, ns.num_z_samples)
+        mnist_hmm = HMMReinforce(num_steps, ns.num_states, ns.num_z_samples)
     case "reinforce_baseline":
-        mnist_hmm = HMMReinforceBaseline(ns.num_states, ns.num_z_samples)
+        mnist_hmm = HMMReinforceBaseline(num_steps, ns.num_states, ns.num_z_samples)
     case _:
         raise RuntimeError(f"mode {ns.mode} not recognised.")
 

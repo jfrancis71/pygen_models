@@ -5,10 +5,16 @@ from torch.distributions.categorical import Categorical
 
 class HMM(nn.Module):
     """Defines a Hidden Markov Model.
+
     The observation model should be a layer type object which accepts a one hot state
     and returns a probability distribution over an observation.
+
+    Args:
+        num_steps (int): length of sequence
+        num_states (int): number of hidden states
+        observation_model: nn.Module with forward method (accepting one hot tensor) returning a probability distribution
     """
-    def __init__(self, num_states, observation_model):
+    def __init__(self, num_steps, num_states, observation_model):
         super().__init__()
         # pylint: disable=E1101
         self.prior_states_vector = nn.Parameter(torch.randn([num_states]))  # (state)
@@ -16,19 +22,20 @@ class HMM(nn.Module):
             nn.Parameter(torch.randn(num_states, num_states))  # (state, state')
         self.observation_model = observation_model
         self.num_states = num_states
+        self.num_steps = num_steps
 
-    def sample(self, num_steps):
+    def sample(self):
         """Samples observation sequence."""
-        return self.sample_variables(num_steps)[1]
+        return self.sample_variables()[1]
 
-    def sample_variables(self, num_steps):
+    def sample_variables(self):
         """Samples state sequence and observation sequence and returns as a tuple."""
         state = self.prior_state_distribution().sample()
         state_sequence = [state]
         one_hot = nn.functional.one_hot(state, self.num_states).float()
         observation = self.observation_model(one_hot).sample()
         observation_sequence = [observation]
-        for _ in range(num_steps-1):
+        for _ in range(self.num_steps-1):
             state = Categorical(logits=self.state_transitions_matrix[state]).sample()
             one_hot = nn.functional.one_hot(state, self.num_states).float()
             observation = self.observation_model(one_hot).sample()
@@ -53,8 +60,8 @@ class HMM(nn.Module):
 
 
 class HMMAnalytic(HMM):
-    def __init__(self, num_states, observation_model):
-        super().__init__(num_states, observation_model)
+    def __init__(self, num_steps, num_states, observation_model):
+        super().__init__(num_steps, num_states, observation_model)
 
     def log_prob(self, value):
         # Below assumes it is of length 1 or more

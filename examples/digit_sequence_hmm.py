@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
-from torch.distributions.categorical import Categorical
 import torchvision
 import pygen.train.callbacks as callbacks
 from pygen.train import train
@@ -24,6 +23,7 @@ parser.add_argument("--num_states", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
+num_steps = 3
 torch.set_default_device(ns.device)
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
     train.DevicePlacement()])
@@ -40,7 +40,7 @@ conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
     pixelcnn_layer.make_simple_pixelcnn_net(), [1, 28, 28], ns.num_states)
 layer_pixelcnn_bernoulli = nn.Sequential(pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,
     [28, 28]), conditional_sp_distribution)
-mnist_hmm = hmm.HMMAnalytic(ns.num_states, layer_pixelcnn_bernoulli)
+mnist_hmm = hmm.HMMAnalytic(num_steps, ns.num_states, layer_pixelcnn_bernoulli)
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([

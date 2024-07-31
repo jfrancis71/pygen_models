@@ -5,7 +5,6 @@ from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.categorical import Categorical
 import torchvision
-import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 from pygen.neural_nets import classifier_net
@@ -44,7 +43,8 @@ class HMMVAE(pygen_hmm.HMM):
         kl_div = self.kl_div_cat(Categorical(logits=q_dist[:, 0]), self.prior_state_distribution())
         for t in range(1, q_dist.shape[1]):
             for s in range(self.num_states):
-                kl_div += torch.exp(q_dist[:, t - 1, s]) * self.kl_div_cat(Categorical(logits=q_dist[:, t]), Categorical(logits=self.state_transition_distribution().logits[s]))
+                kl_div += torch.exp(q_dist[:, t - 1, s]) * self.kl_div_cat(Categorical(logits=q_dist[:, t]),
+                    Categorical(logits=self.state_transition_distribution().logits[s]))
         return kl_div
 
     def kl_div_cat(self, p, q):
@@ -67,7 +67,7 @@ class HMMAnalytic(HMMVAE):
         log_prob = torch.zeros([x.shape[0]], device=self.device())
         for t in range(x.shape[1]):
             for s in range(self.num_states):
-                one_hot = torch.nn.functional.one_hot(torch.tensor(s).to(self.device()), self.num_states).float()
+                one_hot = torch.nn.functional.one_hot(torch.tensor(s), self.num_states).float()
                 log_prob += torch.exp(q_dist[:, t, s]) * self.observation_model(one_hot).log_prob(x[:, t])
         return log_prob
 
@@ -91,10 +91,11 @@ class HMMUniform(HMMMultiSample):
         batch_size = q_dist.shape[0]
         log_prob = torch.zeros([x.shape[0]], device=self.device())
         for t in range(x.shape[1]):
-            z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states]).to(self.device())).sample()
-            one_hot = torch.nn.functional.one_hot(z, self.num_states).float()
-            q_probs = torch.exp(q_dist[:,t])[torch.arange(batch_size), z]
-            log_prob_t = self.observation_model(one_hot).log_prob(x[:, t])
+            uniform_dist = torch.distributions.one_hot_categorical.OneHotCategorical(
+                logits=torch.zeros([batch_size, self.num_states]))
+            z = uniform_dist.sample().float()
+            q_probs = uniform_dist.log_prob(z).exp()
+            log_prob_t = self.observation_model(z).log_prob(x[:, t])
             log_prob += self.num_states * q_probs * log_prob_t
         return log_prob
 
@@ -104,28 +105,24 @@ class HMMReinforce(HMMMultiSample):
         super().__init__(num_states, num_z_samples)
 
     def sample_reconstruct_log_prob(self, q_dist, x):
-        batch_size = q_dist.shape[0]
         log_prob = torch.zeros([x.shape[0]], device=self.device())
         for t in range(x.shape[1]):
-            z = torch.distributions.categorical.Categorical(logits=q_dist[:,t]).sample()
-            one_hot = torch.nn.functional.one_hot(z, self.num_states).float()
-            q_logits = q_dist[:,t][torch.arange(batch_size), z]
-            log_prob_t = self.observation_model(one_hot).log_prob(x[:, t])
+            q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist[:, t])
+            z = q_distribution.sample()
+            q_logits = q_distribution.log_prob(z)
+            log_prob_t = self.observation_model(z).log_prob(x[:, t])
             reinforce = log_prob_t.detach() * q_logits
             log_prob += log_prob_t + reinforce - reinforce.detach()
         return log_prob
 
 
-class HMMReinforceBaseline(HMMMultiSample):
+class HMMReinforceBaseline(HMMVAE):
     def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
-        self.baseline_pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(self.num_states)
-        self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-        self.baseline_dist = pixelcnn_dist._PixelCNN(
-            self.baseline_pixelcnn_net,
-            [1, 28, 28],
-            self.base_layer, None
-        )
+        super().__init__(num_states)
+        net = pixelcnn_dist.make_simple_pixelcnn_net()
+        self.baseline_dist = pixelcnn_dist.make_pixelcnn(
+            pixelcnn_dist.make_bernoulli_base_distribution(), net, event_shape=[1, 28, 28])
+        self.num_z_samples = num_z_samples
 
     def reconstruct_log_prob(self, q_dist, x):
         baseline_log_prob = torch.zeros([x.shape[0], x.shape[1]], device=self.device())
@@ -137,13 +134,12 @@ class HMMReinforceBaseline(HMMMultiSample):
         return log_prob + sum_baseline_log_prob - sum_baseline_log_prob.detach()
 
     def sample_reconstruct_log_prob(self, q_dist, x, baseline_log_prob):
-        batch_size = q_dist.shape[0]
         log_prob = torch.zeros([x.shape[0]], device=self.device())
         for t in range(x.shape[1]):
-            z = torch.distributions.categorical.Categorical(logits=q_dist[:,t]).sample()
-            one_hot = torch.nn.functional.one_hot(z, self.num_states).float()
-            q_logits = q_dist[:,t][torch.arange(batch_size), z]
-            log_prob_t = self.observation_model(one_hot).log_prob(x[:, t])
+            q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist[:, t])
+            z = q_distribution.sample()
+            q_logits = q_distribution.log_prob(z)
+            log_prob_t = self.observation_model(z).log_prob(x[:, t])
             reinforce = (log_prob_t - baseline_log_prob[:, t]).detach() * q_logits
             log_prob += log_prob_t + reinforce - reinforce.detach()
         return log_prob

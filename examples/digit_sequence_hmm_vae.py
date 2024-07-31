@@ -32,7 +32,7 @@ class HMMVAE(pygen_hmm.HMM):
         return self.elbo(x)
 
     def elbo(self, x):
-        q_dist = torch.zeros([x.shape[0], x.shape[1], self.num_states], device=self.device())
+        q_dist = torch.zeros([x.shape[0], x.shape[1], self.num_states])
         for t in range(x.shape[1]):
             q_dist[:, t] = self.q(x[:, t]).logits
         reconstruct_log_prob = self.reconstruct_log_prob(q_dist, x)
@@ -64,7 +64,7 @@ class HMMAnalytic(HMMVAE):
 
     def reconstruct_log_prob(self, q_dist, x):
         """encoder_dist is tensor of shape [B, T, N], x has shape [B, T, C, Y, X]"""
-        log_prob = torch.zeros([x.shape[0]], device=self.device())
+        log_prob = torch.zeros([x.shape[0]])
         for t in range(x.shape[1]):
             for s in range(self.num_states):
                 one_hot = torch.nn.functional.one_hot(torch.tensor(s), self.num_states).float()
@@ -89,7 +89,7 @@ class HMMUniform(HMMMultiSample):
 
     def sample_reconstruct_log_prob(self, q_dist, x):  # Using uniform sampling
         batch_size = q_dist.shape[0]
-        log_prob = torch.zeros([x.shape[0]], device=self.device())
+        log_prob = torch.zeros([x.shape[0]])
         for t in range(x.shape[1]):
             uniform_dist = torch.distributions.one_hot_categorical.OneHotCategorical(
                 logits=torch.zeros([batch_size, self.num_states]))
@@ -105,7 +105,7 @@ class HMMReinforce(HMMMultiSample):
         super().__init__(num_steps, num_states, num_z_samples)
 
     def sample_reconstruct_log_prob(self, q_dist, x):
-        log_prob = torch.zeros([x.shape[0]], device=self.device())
+        log_prob = torch.zeros([x.shape[0]])
         for t in range(x.shape[1]):
             q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist[:, t])
             z = q_distribution.sample()
@@ -125,7 +125,7 @@ class HMMReinforceBaseline(HMMVAE):
         self.num_z_samples = num_z_samples
 
     def reconstruct_log_prob(self, q_dist, x):
-        baseline_log_prob = torch.zeros([x.shape[0], x.shape[1]], device=self.device())
+        baseline_log_prob = torch.zeros([x.shape[0], x.shape[1]])
         for t in range(x.shape[1]):
             baseline_log_prob[:, t] = self.baseline_dist.log_prob(x[:, t])
         log_probs = [self.sample_reconstruct_log_prob(q_dist, x, baseline_log_prob) for _ in range(self.num_z_samples)]
@@ -134,7 +134,7 @@ class HMMReinforceBaseline(HMMVAE):
         return log_prob + sum_baseline_log_prob - sum_baseline_log_prob.detach()
 
     def sample_reconstruct_log_prob(self, q_dist, x, baseline_log_prob):
-        log_prob = torch.zeros([x.shape[0]], device=self.device())
+        log_prob = torch.zeros([x.shape[0]])
         for t in range(x.shape[1]):
             q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist[:, t])
             z = q_distribution.sample()

@@ -16,6 +16,7 @@ import pygen_models.distributions.hmm as pygen_hmm
 from pygen_models.datasets import sequential_mnist
 import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
+import pygen_models.utils.nn_thread as nn_thread
 
 
 class HMMVAE(pygen_hmm.HMM):
@@ -26,16 +27,14 @@ class HMMVAE(pygen_hmm.HMM):
         layer_pixelcnn_bernoulli = nn.Sequential(pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,
                                                                               [28, 28]), conditional_sp_distribution)
         super().__init__(num_steps, num_states, layer_pixelcnn_bernoulli)
-        self.q = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states),
+        self.q = nn.Sequential(nn_thread.NNThread(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), 2),
             layer_one_hot_categorical.OneHotCategorical())
 
     def log_prob(self, x):
         return self.elbo(x)
 
     def elbo(self, x):
-        q_logits = torch.zeros([x.shape[0], x.shape[1], self.num_states])
-        for t in range(x.shape[1]):
-            q_logits[:, t] = self.q(x[:, t]).logits
+        q_logits = self.q(x).logits
         base_distribution = OneHotCategorical(logits=q_logits)
         q_dist = torch.distributions.independent.Independent(base_distribution, reinterpreted_batch_ndims=1)
         reconstruct_log_prob = self.reconstruct_log_prob(q_dist, x)

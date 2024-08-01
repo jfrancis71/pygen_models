@@ -23,7 +23,7 @@ parser.add_argument("--num_states", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
-num_steps = 3
+num_steps = 5
 torch.set_default_device(ns.device)
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
     train.DevicePlacement()])
@@ -32,8 +32,8 @@ mnist_dataset = torchvision.datasets.MNIST(
     transform=transform)
 train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000],
     generator=torch.Generator(device=torch.get_default_device()))
-train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, ns.dummy_run)
-validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, ns.dummy_run)
+train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, num_steps,ns.dummy_run)
+validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, num_steps, ns.dummy_run)
 
 conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
     pixelcnn_dist.make_bernoulli_base_distribution(),

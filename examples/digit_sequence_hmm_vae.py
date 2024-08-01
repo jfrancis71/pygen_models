@@ -64,12 +64,12 @@ class HMMAnalytic(HMMVAE):
 
     def reconstruct_log_prob(self, q_dist, x):
         """encoder_dist is tensor of shape [B, T, N], x has shape [B, T, C, Y, X]"""
-        log_prob = torch.zeros([x.shape[0]])
+        log_prob = torch.zeros([x.shape[0], x.shape[1], self.num_states])
         for t in range(x.shape[1]):
             for s in range(self.num_states):
                 one_hot = torch.nn.functional.one_hot(torch.tensor(s), self.num_states).float()
-                log_prob += torch.exp(q_dist[:, t, s]) * self.observation_model(one_hot).log_prob(x[:, t])
-        return log_prob
+                log_prob[:, t, s] = torch.exp(q_dist[:, t, s]) * self.observation_model(one_hot).log_prob(x[:, t])
+        return log_prob.sum(axis=[1,2])
 
 
 class HMMMultiSample(HMMVAE):
@@ -156,7 +156,7 @@ parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
-num_steps = 3
+num_steps = 5
 torch.set_default_device(ns.device)
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
     train.DevicePlacement()])
@@ -165,8 +165,8 @@ mnist_dataset = torchvision.datasets.MNIST(
     transform=transform)
 train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000],
     generator=torch.Generator(device=torch.get_default_device()))
-train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, ns.dummy_run)
-validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, ns.dummy_run)
+train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, num_steps, ns.dummy_run)
+validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, num_steps, ns.dummy_run)
 
 match ns.mode:
     case "analytic":

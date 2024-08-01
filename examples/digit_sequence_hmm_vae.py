@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.categorical import Categorical
+from torch.distributions.one_hot_categorical import OneHotCategorical
 import torchvision
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
@@ -32,18 +33,20 @@ class HMMVAE(pygen_hmm.HMM):
         return self.elbo(x)
 
     def elbo(self, x):
-        q_dist = torch.zeros([x.shape[0], x.shape[1], self.num_states])
+        q_logits = torch.zeros([x.shape[0], x.shape[1], self.num_states])
         for t in range(x.shape[1]):
-            q_dist[:, t] = self.q(x[:, t]).logits
+            q_logits[:, t] = self.q(x[:, t]).logits
+        base_distribution = OneHotCategorical(logits=q_logits)
+        q_dist = torch.distributions.independent.Independent(base_distribution, reinterpreted_batch_ndims=1)
         reconstruct_log_prob = self.reconstruct_log_prob(q_dist, x)
         kl_div = self.kl_div(q_dist)
-        return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div, Categorical(q_dist[0])
+        return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div, Categorical(q_dist.base_dist.logits[0])
 
     def kl_div(self, q_dist):
-        kl_div = self.kl_div_cat(Categorical(logits=q_dist[:, 0]), self.prior_state_distribution())
-        for t in range(1, q_dist.shape[1]):
+        kl_div = self.kl_div_cat(Categorical(logits=q_dist.base_dist.logits[:, 0]), self.prior_state_distribution())
+        for t in range(1, self.num_steps):
             for s in range(self.num_states):
-                kl_div += torch.exp(q_dist[:, t - 1, s]) * self.kl_div_cat(Categorical(logits=q_dist[:, t]),
+                kl_div += torch.exp(q_dist.base_dist.logits[:, t - 1, s]) * self.kl_div_cat(Categorical(logits=q_dist.base_dist.logits[:, t]),
                     Categorical(logits=self.state_transition_distribution().logits[s]))
         return kl_div
 
@@ -68,7 +71,7 @@ class HMMAnalytic(HMMVAE):
         for t in range(x.shape[1]):
             for s in range(self.num_states):
                 one_hot = torch.nn.functional.one_hot(torch.tensor(s), self.num_states).float()
-                log_prob[:, t, s] = torch.exp(q_dist[:, t, s]) * self.observation_model(one_hot).log_prob(x[:, t])
+                log_prob[:, t, s] = torch.exp(q_dist.base_dist.logits[:, t, s]) * self.observation_model(one_hot).log_prob(x[:, t])
         return log_prob.sum(axis=[1,2])
 
 
@@ -107,7 +110,7 @@ class HMMReinforce(HMMMultiSample):
     def sample_reconstruct_log_prob(self, q_dist, x):
         log_prob = torch.zeros([x.shape[0]])
         for t in range(x.shape[1]):
-            q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist[:, t])
+            q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist.base_dist.logits[:, t])
             z = q_distribution.sample()
             q_logits = q_distribution.log_prob(z)
             log_prob_t = self.observation_model(z).log_prob(x[:, t])
@@ -136,7 +139,7 @@ class HMMReinforceBaseline(HMMVAE):
     def sample_reconstruct_log_prob(self, q_dist, x, baseline_log_prob):
         log_prob = torch.zeros([x.shape[0]])
         for t in range(x.shape[1]):
-            q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist[:, t])
+            q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist.base_dist.logits[:, t])
             z = q_distribution.sample()
             q_logits = q_distribution.log_prob(z)
             log_prob_t = self.observation_model(z).log_prob(x[:, t])

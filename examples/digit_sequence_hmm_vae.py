@@ -138,11 +138,10 @@ class HMMReinforceBaseline(HMMVAE):
 
     def sample_reconstruct_log_prob(self, q_dist, x, baseline_log_prob):
         log_prob = torch.zeros([x.shape[0]])
-        for t in range(x.shape[1]):
-            q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist.base_dist.logits[:, t])
-            z = q_distribution.sample()
-            q_logits = q_distribution.log_prob(z)
-            log_prob_t = self.observation_model(z).log_prob(x[:, t])
+        z = q_dist.sample()
+        q_logits = q_dist.log_prob(z)
+        for t in range(self.num_steps):
+            log_prob_t = self.observation_model(z[:, t]).log_prob(x[:, t])
             reinforce = (log_prob_t - baseline_log_prob[:, t]).detach() * q_logits
             log_prob += log_prob_t + reinforce - reinforce.detach()
         return log_prob

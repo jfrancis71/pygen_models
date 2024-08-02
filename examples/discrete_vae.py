@@ -224,4 +224,4 @@ if ns.log_posteriors:
 epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
 train.train(digit_distribution, train_dataset, pygen_models_train.vae_objective(ns.log_kl_gap),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=False)
+    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False)

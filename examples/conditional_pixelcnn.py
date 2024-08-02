@@ -18,6 +18,7 @@ parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--net", default="simple_pixelcnn_net")
 parser.add_argument("--num_resnet", default=3, type=int)
+parser.add_argument("--max_epoch", default=1, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
@@ -57,4 +58,4 @@ conditional_distribution = nn.Sequential(pixelcnn.SpatialExpand(10, 3, event_sha
 train.train(
     conditional_distribution, train_dataset, train.layer_objective(reverse_inputs=True, num_classes=10),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callback, dummy_run=ns.dummy_run)
+    epoch_end_callback=epoch_end_callback, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch)

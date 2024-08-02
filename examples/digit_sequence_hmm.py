@@ -51,4 +51,4 @@ epoch_end_callbacks = callbacks.callback_compose([
 ])
 train.train(mnist_hmm, train_dataset, pygen_models_train.distribution_objective,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=False)
+    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False)

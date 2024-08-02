@@ -19,6 +19,7 @@ parser.add_argument("--device", default="cpu")
 parser.add_argument("--num_resnet", default=3, type=int)
 parser.add_argument("--net", default="simple_pixelcnn_net")
 parser.add_argument("--dummy_run", action="store_true")
+parser.add_argument("--max_epoch", default=1, type=int)
 ns = parser.parse_args()
 
 torch.set_default_device(ns.device)
@@ -54,4 +55,4 @@ epoch_end_callbacks = callbacks.callback_compose([
 ])
 train.train(image_distribution, train_dataset, pygen_models_train.distribution_objective,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)
+    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch)

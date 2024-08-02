@@ -6,32 +6,37 @@ import pygen.layers.independent_quantized_distribution as ql
 from pygen_models.neural_nets import simple_pixelcnn_net
 
 
+def channel_last(x: torch.Tensor):
+    batch_dims = len(x.shape)-3
+    return x.permute(list(range(batch_dims)) + [batch_dims+2, batch_dims+1, batch_dims])
+
 class PixelCNN(nn.Module):
     def __init__(self, pixelcnn_net, event_shape, layer, params):
         super().__init__()
         if len(event_shape) != 3:
             raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
-        self.event_shape = event_shape
+        self.event_shape = torch.Size(event_shape)
         self.layer = layer
         if params is None or len(params.shape) == 3:
-            self.batch_shape = []
+            self.batch_shape = torch.Size([])
         else:
-            self.batch_shape = params.shape[0]
+            self.batch_shape = torch.Size(params.shape[:-3])
         self.params = params
         self.pixelcnn_net = pixelcnn_net
 
-    def log_prob(self, samples):
-        # pylint: disable=E1101
-        if samples.size()[1:4] != torch.Size(self.event_shape):
-            raise RuntimeError(f"sample shape {samples.shape[1:4]}, but event_shape has shape {self.event_shape}")
-        params = self.params
-        if params is not None:
-            if len(params.shape) == 3:
-                params = params.unsqueeze(0).repeat(samples.shape[0], 1, 1, 1)
-        logits = self.pixelcnn_net((samples*2.0)-1.0, conditional=params)
-        layer_logits = logits.permute(0, 2, 3, 1)  # B, Y, X, P where P for parameters
-        permute_samples = samples.permute(0, 2, 3, 1)  # B, Y, X, C
-        return self.layer(layer_logits).log_prob(permute_samples).sum(axis=[1, 2])
+    def log_prob(self, value):
+        sample_shape = value.shape[:-len(self.batch_shape+self.event_shape)]
+        nn_values = value.flatten(0, len(sample_shape+self.batch_shape)-1)
+        nn_params = None
+        if self.params is not None:
+            nn_params = self.params.flatten(0, len(sample_shape+self.batch_shape)-1)
+            if len(nn_params.shape) == 3:
+                nn_params = nn_params.unsqueeze(0).repeat(sample_shape+torch.Size([1]*len(nn_params.shape)))
+        logits = self.pixelcnn_net((nn_values*2.0)-1.0, conditional=nn_params)
+        reshape_logits = logits.reshape(sample_shape + self.batch_shape + self.event_shape)
+        layer_logits = channel_last(reshape_logits)
+        permute_samples = channel_last(value)
+        return self.layer(layer_logits).log_prob(permute_samples).sum(axis=[-1, -2])
 
     def sample(self, sample_shape=None):
         with torch.no_grad():
@@ -52,9 +57,9 @@ class PixelCNN(nn.Module):
                 if sample_shape is None:
                     net_batch_shape = [1]
                 else:
-                    net_batch_shape = sample_shape
+                    net_batch_shape = torch.Size(sample_shape)
             else:
-                net_batch_shape = [params.shape[0]]
+                net_batch_shape = torch.Size([params.shape[0]])
             sample = torch.zeros(net_batch_shape+self.event_shape)
             for y in range(self.event_shape[1]):
                 for x in range(self.event_shape[2]):
@@ -65,7 +70,7 @@ class PixelCNN(nn.Module):
         if sample_shape is None and (params is None or len(self.params.shape)==3):
             return sample[0]
         if sample_shape is not None and params is not None:
-            return torch.reshape(sample, sample_shape+[self.params.shape[0]]+self.event_shape)
+            return torch.reshape(sample, torch.Size(sample_shape)+torch.Size([self.params.shape[0]])+self.event_shape)
         return sample
 
 

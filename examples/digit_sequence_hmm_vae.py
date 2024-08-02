@@ -136,13 +136,12 @@ class HMMReinforceBaseline(HMMVAE):
         return log_prob + sum_baseline_log_prob - sum_baseline_log_prob.detach()
 
     def sample_reconstruct_log_prob(self, q_dist, x, baseline_log_prob):
-        log_prob = torch.zeros([x.shape[0]])
         z = q_dist.sample()
         q_logits = q_dist.log_prob(z)
-        for t in range(self.num_steps):
-            log_prob_t = self.observation_model(z[:, t]).log_prob(x[:, t])
-            reinforce = (log_prob_t - baseline_log_prob[:, t]).detach() * q_logits
-            log_prob += log_prob_t + reinforce - reinforce.detach()
+        pz_given_x = self.observation_model(z)
+        logits_pz_given_x = pz_given_x.log_prob(x).sum(axis=1)
+        reinforce = (logits_pz_given_x - baseline_log_prob.detach().sum(axis=1)) * q_logits
+        log_prob = logits_pz_given_x + reinforce - reinforce.detach()
         return log_prob
 
 
@@ -191,4 +190,4 @@ epoch_end_callbacks = callbacks.callback_compose([
 ])
 train.train(mnist_hmm, train_dataset, pygen_models_train.vae_objective(False),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, epoch_regularizer=False)
+    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False)

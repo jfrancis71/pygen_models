@@ -41,8 +41,8 @@ class MutualInformation(nn.Module):
         self.num_vars = num_vars
         self.classifier = nn.Sequential(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states*self.num_vars), IndependentCategorical(num_vars, num_states))
         intermediate_channels = 16
-        #net = pixelcnn_layer.make_simple_pixelcnn_net()
-        net = pixelcnn_layer.make_pixelcnn_net(1)
+        net = pixelcnn_layer.make_simple_pixelcnn_net()
+        #net = pixelcnn_layer.make_pixelcnn_net(1)
         conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
             pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
         self.p_x_given_z = nn.Sequential(pixelcnn_layer.SpatialExpand(self.num_states*self.num_vars, intermediate_channels, [28, 28]),
@@ -55,21 +55,32 @@ class MutualInformation(nn.Module):
         p_z = torch.distributions.independent.Independent(base_dist, reinterpreted_batch_ndims=1)
         entropy_z = p_z.entropy()
         mutual_information = entropy_z - entropy_z_given_x.mean()
+        return mutual_information
+
+    def log_trainx(self, x):
+        pz_given_x = self.classifier(x)
         sample_z = pz_given_x.sample()
         reshape_z = torch.reshape(nn.functional.one_hot(sample_z, self.num_states).float(), [x.shape[0],self.num_vars*self.num_states])
         logits_px_given_z = self.p_x_given_z(reshape_z).log_prob(x).mean()
-        grad = logits_px_given_z - logits_px_given_z.detach()  # get a gradient to train p(x|z)
-        return mutual_information + grad, logits_px_given_z.detach()
+        return logits_px_given_z
 
     def forward(self, z):
         return self.p_x_given_z(z.max(axis=1)[1])
 
 
 def mi_objective(trainable, batch):
-    mi, log_prob_x = (trainable.mutual_info(batch[0]))
+    mi = (trainable.mutual_info(batch[0]))
     return mi, np.array(
-        (mi.cpu().detach().numpy(), log_prob_x),
-        dtype=[('mutual_information', 'float32'), ('log_prob_x_given_z', 'float32')])
+        (mi.cpu().detach().numpy()),
+        dtype=[('mutual_information', 'float32')])
+
+
+def trainx(trainable, batch):
+    log_prob_x = (trainable.log_trainx(batch[0]))
+    return log_prob_x, np.array(
+        (log_prob_x.cpu().detach().numpy()),
+        dtype=[('log_prob_x', 'float32')])
+
 
 
 def tb_reconstruct_images(tb_writer, images, num_vars, num_states):
@@ -132,4 +143,6 @@ epoch_end_callbacks_list = [
     tb_dataset_mi(tb_writer, validation_dataset)]
 epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
 train.train(digit_mi, train_dataset, mi_objective,
+    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=2)
+train.train(digit_mi, train_dataset, trainx,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)

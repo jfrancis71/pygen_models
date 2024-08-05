@@ -77,13 +77,12 @@ class VAEAnalytic(VAE):
     def __init__(self, num_states):
         super().__init__(num_states)
 
+
     def reconstruct_log_prob(self, q_z_given_x, x):
         batch_size = x.shape[0]
-        reconstruct_log_prob_z = torch.stack([
-            self.p_x_given_z(self.identity_matrix[z].unsqueeze(0).repeat(batch_size, 1)).log_prob(x)
-            for z in range(self.num_states)], dim=1)
-        recon = q_z_given_x.probs * reconstruct_log_prob_z
-        log_prob = torch.sum(recon, axis=1)
+        p_x_given_z = self.p_x_given_z(self.identity_matrix.unsqueeze(0).repeat(batch_size, 1, 1))
+        logits_p_x_given_z = p_x_given_z.log_prob(x.unsqueeze(1).repeat(1, self.num_states, 1, 1, 1))
+        log_prob = torch.sum(logits_p_x_given_z * q_z_given_x.probs, axis=1)
         return log_prob
 
 

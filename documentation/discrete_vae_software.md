@@ -7,9 +7,6 @@ classDiagram
         +kl_div(p, q)
         +reconstruct_log_prob(q(z|x), x)
     }
-    class VAE_MultiSample{
-        +reconstruct_log_prob(q(z|x), x)
-    }
     class VAE_Analytic{
         +reconstruct_log_prob(q(z|x), x)
     }
@@ -24,8 +21,7 @@ classDiagram
         +sample_reconstruct_log_prob(q(z|x), x)
     }
     VAE --> VAE_Analytic
-    VAE --> VAE_MultiSample
-    VAE_MultiSample --> VAE_Uniform
-    VAE_MultiSample --> VAE_Reinforce
+    VAE --> VAE_Uniform
+    VAE --> VAE_Reinforce
     VAE --> VAE_ReinforceBaseline
 ```

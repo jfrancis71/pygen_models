@@ -11,14 +11,13 @@ classDiagram
         +reconstruct_log_prob(q(z|x), x)
     }
     class VAE_Uniform{
-        +sample_reconstruct_log_prob(q(z|x), x)
+        +reconstruct_log_prob(q(z|x), x)
     }
     class VAE_Reinforce{
-        +sample_reconstruct_log_prob(q(z|x), x)
+        +reconstruct_log_prob(q(z|x), x)
     }
     class VAE_ReinforceBaseline{
         +reconstruct_log_prob(q(z|x), x)
-        +sample_reconstruct_log_prob(q(z|x), x)
     }
     VAE --> VAE_Analytic
     VAE --> VAE_Uniform

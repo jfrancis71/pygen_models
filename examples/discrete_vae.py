@@ -35,19 +35,17 @@ class IndependentOneHotCategorical(nn.Module):
 
 
 class VAE(nn.Module):
-    def __init__(self, num_vars, num_states, p_x_given_z, num_z_samples):
+    def __init__(self, num_vars, num_states, p_x_given_z):
         super().__init__()
         self.num_states = num_states
         self.num_vars = num_vars
         self.p_x_given_z = p_x_given_z
-        self.num_z_samples = num_z_samples
         self.q_z_given_x = nn.Sequential(
             classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states*self.num_vars),
             IndependentOneHotCategorical(self.num_vars, self.num_states),
         )
         self.logits_p_z = torch.zeros([self.num_states])
         self.identity_matrix = torch.eye(num_states).float()
-        self.gumbel_dist = torch.distributions.gumbel.Gumbel(torch.tensor(0.0), torch.tensor(1.0))
 
     def p_z(self):
         base_dist = torch.distributions.one_hot_categorical.OneHotCategorical(logits=torch.zeros([self.num_vars, self.num_states]))
@@ -75,20 +73,11 @@ class VAE(nn.Module):
         return self.p_x_given_z(z)
 
     def reconstruct_log_prob(self, q_z_given_x, x):
-        batch_size = x.shape[0]
-        z = q_z_given_x.sample([self.num_z_samples])
+        z_logits = q_z_given_x.base_dist.logits
+        z = nn.functional.gumbel_softmax(z_logits, hard=True)
         nz = z.flatten(-2)
-        reconstruct_log_prob = self.p_x_given_z(nz).log_prob(x.unsqueeze(0).repeat(self.num_z_samples, 1, 1, 1, 1))
-        gumbels = self.gumbel_dist.sample([self.num_z_samples, batch_size, self.num_vars, self.num_states])
-        encode_h = torch.softmax(q_z_given_x.base_dist.probs.unsqueeze(0).repeat(self.num_z_samples, 1, 1, 1) + gumbels, dim=-1)
-        with torch.no_grad():
-            decode_h = self.p_x_given_z(encode_h.flatten(-2))
-        log_prob_h = decode_h.log_prob(x.unsqueeze(0).repeat(self.num_z_samples, 1, 1, 1, 1))
-        reinforce = q_z_given_x.log_prob(z) * (reconstruct_log_prob.detach()-log_prob_h)
-        reparam = log_prob_h
-        log_prob = (reconstruct_log_prob + reinforce - reinforce.detach() + reparam - reparam.detach()).mean(axis=0)
-        return log_prob
-
+        reconstruct_log_prob = self.p_x_given_z(nz).log_prob(x)
+        return reconstruct_log_prob
 
 def tb_vae_reconstruct(tb_writer, images):
     def _fn(trainer_state):
@@ -107,7 +96,6 @@ parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
 parser.add_argument("--num_states", default=10, type=int)
 parser.add_argument("--num_vars", default=1, type=int)
-parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 parser.add_argument("--decoder_type", default="simple_pixelcnn")
 ns = parser.parse_args()
@@ -138,7 +126,7 @@ match ns.decoder_type:
     case _:
         raise RuntimeError(f"decoder_type {ns.decoder_type} not recognised.")
 
-digit_distribution = VAE(ns.num_vars, ns.num_states, decoder_type, ns.num_z_samples)
+digit_distribution = VAE(ns.num_vars, ns.num_states, decoder_type)
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks_list = [

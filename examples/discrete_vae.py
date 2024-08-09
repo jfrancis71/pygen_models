@@ -1,8 +1,9 @@
 """Simple Discrete VAE for training on MNIST.
 
-Results default params, validation epoch: (Analytic -93.2, Uniform -111.3, ReinforceBaseline -94.25, Gumbel -95.77)
-Results basic log_prob: 152, reconstruct: 133, kl_div: 17.6
-Results simple pixelcn log_prob: 101, reconstruct: 96, kl_div: 5.2
+Results (epoch validation default parameters)
+basic log_prob: 117, reconstruct: 101, kl_div: 16.6
+simple pixelcnn log_prob: 84, reconstruct: 75, kl_div: 8.8
+simple pixelcnn may have best reconstruction probability, but basic looks better visually.
 """
 
 
@@ -83,8 +84,8 @@ parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
-parser.add_argument("--num_states", default=10, type=int)
-parser.add_argument("--num_vars", default=1, type=int)
+parser.add_argument("--num_states", default=8, type=int)
+parser.add_argument("--num_vars", default=20, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 parser.add_argument("--decoder_type", default="simple_pixelcnn")
 ns = parser.parse_args()

@@ -17,21 +17,10 @@ from pygen.train import callbacks
 from pygen.neural_nets import classifier_net
 import pygen.train.train as train
 import pygen.layers.independent_bernoulli as bernoulli_layer
+import pygen_models.layers.independent_one_hot_categorical as one_hot_categorical
 import pygen_models.layers.pixelcnn as pixelcnn_layer
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.train.train as pygen_models_train
-
-class IndependentOneHotCategorical(nn.Module):
-    def __init__(self, num_vars, num_states):
-        super().__init__()
-        self.num_vars = num_vars
-        self.num_states = num_states
-
-    def forward(self, x):
-        batch_shape = x.shape[:-1]
-        reshape_logits = x.reshape(batch_shape + torch.Size([self.num_vars, self.num_states]))
-        categorical = torch.distributions.one_hot_categorical.OneHotCategorical(logits=reshape_logits)
-        return torch.distributions.independent.Independent(base_distribution=categorical, reinterpreted_batch_ndims=1)
 
 
 class VAE(nn.Module):
@@ -42,7 +31,7 @@ class VAE(nn.Module):
         self.p_x_given_z = p_x_given_z
         self.q_z_given_x = nn.Sequential(
             classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states*self.num_vars),
-            IndependentOneHotCategorical(self.num_vars, self.num_states),
+            one_hot_categorical.IndependentOneHotCategorical([self.num_vars], self.num_states),
         )
         self.logits_p_z = torch.zeros([self.num_states])
         self.identity_matrix = torch.eye(num_states).float()

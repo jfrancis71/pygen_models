@@ -19,7 +19,7 @@ parser.add_argument("--device", default="cpu")
 parser.add_argument("--num_resnet", default=3, type=int)
 parser.add_argument("--net", default="simple_pixelcnn_net")
 parser.add_argument("--dummy_run", action="store_true")
-parser.add_argument("--max_epoch", default=1, type=int)
+parser.add_argument("--max_epoch", default=10, type=int)
 ns = parser.parse_args()
 
 torch.set_default_device(ns.device)

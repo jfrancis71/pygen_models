@@ -3,20 +3,20 @@ import torchvision
 from torchvision.utils import make_grid
 
 
-def tb_sample_images(tb_writer, tb_name):
+def sample_images(distribution):
     """Creates a 4x4 grid of images by sampling the trainable.
 
-    >>> callback = tb_sample_images(None, "")
+    Example:
     >>> base_distribution = torch.distributions.bernoulli.Bernoulli(logits=torch.zeros([1, 8, 8]))
     >>> distribution = torch.distributions.independent.Independent(base_distribution, reinterpreted_batch_ndims=3)
-    >>> trainer = type('TrainingLoopInfo', (object,), {'trainable': distribution})()
-    >>> callback(trainer)
+    >>> sampling_fn = sample_images(distribution)
+    >>> len(sampling_fn().shape)
+    3
     """
-    def _fn(training_loop_info):
-        imglist = training_loop_info.trainable.sample([16])
-        grid_image = make_grid(imglist, padding=10, nrow=4, value_range=(0.0, 1.0))
-        if tb_writer is not None:
-            tb_writer.add_image(tb_name, grid_image, training_loop_info.epoch_num)
+    def _fn():
+        img_list = distribution.sample([16])
+        grid_image = make_grid(img_list, padding=10, nrow=4, value_range=(0.0, 1.0))
+        return grid_image
     return _fn
 
 

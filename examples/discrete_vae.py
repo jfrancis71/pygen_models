@@ -1,10 +1,4 @@
-"""Simple Discrete VAE for training on MNIST.
-
-Results (epoch validation default parameters)
-basic log_prob: 117, reconstruct: 101, kl_div: 16.6
-simple pixelcnn log_prob: 84, reconstruct: 75, kl_div: 8.8
-simple pixelcnn may have best reconstruction probability, but basic looks better visually.
-"""
+"""Simple Discrete VAE for training on MNIST."""
 
 
 import argparse
@@ -59,9 +53,6 @@ class VAE(nn.Module):
         decode = self.p_x_given_z(z)
         return decode.sample()
 
-    def forward(self, z):
-        return self.p_x_given_z(z)
-
     def reconstruct_log_prob(self, q_z_given_x, x):
         z_logits = q_z_given_x.base_dist.logits
         z = nn.functional.gumbel_softmax(z_logits, hard=True)
@@ -69,19 +60,20 @@ class VAE(nn.Module):
         reconstruct_log_prob = self.p_x_given_z(nz).log_prob(x)
         return reconstruct_log_prob
 
-def tb_vae_reconstruct(tb_writer, images):
-    def _fn(trainer_state):
-        z = trainer_state.trainable.q_z_given_x(images).sample()
-        reconstruct_images = trainer_state.trainable.p_x_given_z(z.flatten(-2)).sample()
+def tb_vae_reconstruct(vae, images):
+    def _fn():
+        z = vae.q_z_given_x(images).sample()
+        reconstruct_images = vae.p_x_given_z(z.flatten(-2)).sample()
         imglist = torch.cat([images, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
-        tb_writer.add_image("reconstruct_image", grid_image, trainer_state.epoch_num)
+        return grid_image
     return _fn
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Discrete VAE')
 parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
+parser.add_argument("--images_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
 parser.add_argument("--num_states", default=8, type=int)
@@ -122,8 +114,9 @@ tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks_list = [
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
-    tb_vae_reconstruct(tb_writer, example_valid_images)
-    ]
+    callbacks.tb_log_image(tb_writer, "generated_images", tb_vae_reconstruct(digit_distribution, example_valid_images))]
+if ns.images_folder is not None:
+    epoch_end_callbacks_list.append(callbacks.file_log_image(ns.images_folder, "generated_images", tb_vae_reconstruct(digit_distribution, example_valid_images)))
 epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
 train.train(digit_distribution, train_dataset, pygen_models_train.vae_objective(),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),

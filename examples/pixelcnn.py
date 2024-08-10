@@ -15,6 +15,7 @@ parser = argparse.ArgumentParser(description='PyGen CIFAR10 PixelCNN')
 parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--dataset", default="mnist")
 parser.add_argument("--tb_folder", default=None)
+parser.add_argument("--images_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--num_resnet", default=3, type=int)
 parser.add_argument("--net", default="simple_pixelcnn_net")
@@ -48,11 +49,14 @@ match ns.dataset:
 train_dataset, validation_dataset = random_split(dataset, data_split,
     generator=torch.Generator(device=torch.get_default_device()))
 tb_writer = SummaryWriter(ns.tb_folder)
-epoch_end_callbacks = callbacks.callback_compose([
-    pygen_models_callbacks.tb_sample_images(tb_writer, "generated_images"),
+epoch_end_callbacks = [
+    callbacks.tb_log_image(tb_writer, "generated_images", pygen_models_callbacks.sample_images(image_distribution)),
     callbacks.tb_epoch_log_metrics(tb_writer),
-    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
-])
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)]
+if ns.images_folder is not None:
+    epoch_end_callbacks.append(
+        callbacks.file_log_image(ns.images_folder,"train",
+            pygen_models_callbacks.sample_images(image_distribution)))
 train.train(image_distribution, train_dataset, pygen_models_train.distribution_objective,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch)
+    epoch_end_callback=callbacks.callback_compose(epoch_end_callbacks), dummy_run=ns.dummy_run, max_epoch=ns.max_epoch)

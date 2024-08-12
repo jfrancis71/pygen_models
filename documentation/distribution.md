@@ -36,4 +36,4 @@ $$
 H[p_\theta(x)] + E_{x \sim p_\theta(x)}[log p(x)]
 $$
 
-which is effectively maximising the entropy of $p_\theta(x)$ subject to our model samples being likely in nature. But given that we cannot evaluate the latter, this is infeasible. Why is the entropy the 1st term? If it was not there the optimal solution is to work out whatever nature has as the mostly likely outcome and then the model would collapse just sampling that single outcome.
+which is effectively maximising the entropy of $p_\theta(x)$ subject to our model samples being likely in nature. But given that we cannot evaluate the latter, this is infeasible. Why is entropy the 1st term? If it was not there the optimal solution is to work out whatever nature has as the mostly likely outcome and then the model would collapse just sampling that single outcome.

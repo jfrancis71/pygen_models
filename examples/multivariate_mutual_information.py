@@ -50,12 +50,16 @@ class MutualInformation(nn.Module):
 
     def mutual_info(self, x):
         pz_given_x = self.classifier(x)
-        entropy_z_given_x = pz_given_x.entropy()
-        base_dist = torch.distributions.categorical.Categorical(pz_given_x.base_dist.probs.mean(axis=0))
-        p_z = torch.distributions.independent.Independent(base_dist, reinterpreted_batch_ndims=1)
-        entropy_z = p_z.entropy()
-        mutual_information = entropy_z - entropy_z_given_x.mean()
-        return mutual_information
+        sample_z = pz_given_x.sample()
+        pz_given_x_log = pz_given_x.log_prob(sample_z)
+        log_pz = torch.zeros([32])
+        for z in range(32):
+            log_pz[z] = torch.logsumexp(pz_given_x.log_prob(sample_z[z]), axis=0) - torch.tensor(32.).log()
+        beta = 1.0
+        mutual_information = pz_given_x_log - log_pz
+        reinforce = pz_given_x_log.detach() * pz_given_x_log - log_pz.detach() * log_pz
+        grad = mutual_information + reinforce - reinforce.detach()
+        return grad.mean(), pz_given_x_log.mean()
 
     def log_trainx(self, x):
         pz_given_x = self.classifier(x)
@@ -69,10 +73,12 @@ class MutualInformation(nn.Module):
 
 
 def mi_objective(trainable, batch):
-    mi = (trainable.mutual_info(batch[0]))
-    return mi, np.array(
-        (mi.cpu().detach().numpy()),
-        dtype=[('mutual_information', 'float32')])
+    mi, pz_given_x = (trainable.mutual_info(batch[0]))
+    log_prob_x = (trainable.log_trainx(batch[0].detach()))
+    met = mi + log_prob_x - log_prob_x.detach()
+    return met, np.array(
+        (mi.cpu().detach().numpy(), pz_given_x.cpu().detach().numpy()),
+        dtype=[('mutual_information', 'float32'), ('pz_given_x', 'float32')])
 
 
 def trainx(trainable, batch):
@@ -143,6 +149,6 @@ epoch_end_callbacks_list = [
     tb_dataset_mi(tb_writer, validation_dataset)]
 epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
 train.train(digit_mi, train_dataset, mi_objective,
-    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=2)
-train.train(digit_mi, train_dataset, trainx,
-    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)
+    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), epoch_end_callback=epoch_end_callbacks, dummy_run=False, max_epoch=10)
+#train.train(digit_mi, train_dataset, trainx,
+#    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)

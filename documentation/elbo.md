@@ -2,7 +2,7 @@ Deriving the ELBO:
 
 
 $$
-Log(p(x)) = E_{x \sim q(z)} [Log(p(x))]
+Log(p(x)) = E_{z \sim q(z)} [Log(p(x))]
 $$
 
 $$

@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser(description='PyGen Conditional PixelCNN')
 parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--dataset", default="mnist")
 parser.add_argument("--tb_folder", default=None)
+parser.add_argument("--images_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--net", default="simple_pixelcnn_net")
 parser.add_argument("--num_resnet", default=3, type=int)
@@ -52,12 +53,16 @@ conditional_distribution = nn.Sequential(
     one_hot.OneHot(10),
     pixelcnn.SpatialExpand(10, 3, event_shape[1:]),
     conditional_sp_distribution)
-epoch_end_callback = callbacks.callback_compose([
+epoch_end_callbacks = [
     callbacks.tb_log_image(tb_writer, "conditional_generated_images",
         callbacks.demo_conditional_images(conditional_distribution, torch.arange(10), num_samples=2)),
     callbacks.tb_epoch_log_metrics(tb_writer),
-    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)])
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)]
+if ns.images_folder is not None:
+    epoch_end_callbacks.append(
+        callbacks.file_log_image(ns.images_folder,"conditional_generated_images",
+        callbacks.demo_conditional_images(conditional_distribution, torch.arange(10), num_samples=2)))
 train.train(
     conditional_distribution, train_dataset, train.layer_objective(reverse_inputs=True),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callback, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch)
+    epoch_end_callback=callbacks.callback_compose(epoch_end_callbacks), dummy_run=ns.dummy_run, max_epoch=ns.max_epoch)

@@ -71,11 +71,19 @@ $$
 
 x = images, z = latent code
 
-From equation 1:
+Relabelling the last equation:
 
 $$
-I(x,z) = E_{(x,z) \sim p(x,z)}[log(\frac{p(z|x)}{p(z)})]
+= E_{(x,z) \sim p(x,z)}[log(q(x|z))] + H_{p(x)}[x] + E_{z \sim p(z)}[ D_{KL} [p(x|z)||q(x|z))] ]
 $$
+
+$$
+= E_{x \sim p(x)}[ E_{z \sim p_\theta(z|x)}[log(q_\phi(x|z))] ] + H_{p(x)}[x] + E_{z \sim p_\theta(z)}[ D_{KL} [p_\theta(x|z)||q_\phi(x|z))] ]
+$$
+
+We model $p_\theta(z|x)$ with the aim of maximizing mutual information between X and Z. So in this setup p(x) is given by nature and we do not have a model for it. $q_\phi(x|z)$ is our image reconstruction term. The middle term is an entropy term and the latter term is a KL term between the real (and unknown) reconstruction term and our model of it.
+
+So the 1st term is a lower bound on mutual information and it is this term we aim to maximize.
 
 
 ## References:

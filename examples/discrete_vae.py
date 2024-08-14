@@ -16,10 +16,11 @@ import pygen_models.layers.independent_one_hot_categorical as one_hot_categorica
 import pygen_models.layers.pixelcnn as pixelcnn_layer
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.train.train as pygen_models_train
+import pygen_models.train.callbacks as pygen_models_callbacks
 
 
 class VAE(nn.Module):
-    def __init__(self, num_vars, num_states, p_x_given_z):
+    def __init__(self, num_vars, num_states, p_x_given_z, beta):
         super().__init__()
         self.num_states = num_states
         self.num_vars = num_vars
@@ -30,6 +31,7 @@ class VAE(nn.Module):
         )
         self.logits_p_z = torch.zeros([self.num_states])
         self.identity_matrix = torch.eye(num_states).float()
+        self.beta = beta
 
     def p_z(self):
         base_dist = torch.distributions.one_hot_categorical.OneHotCategorical(logits=torch.zeros([self.num_vars, self.num_states]))
@@ -46,11 +48,13 @@ class VAE(nn.Module):
         q_z_given_x = self.q_z_given_x(x)
         log_prob = self.reconstruct_log_prob(q_z_given_x, x)
         kl_div = self.kl_div(q_z_given_x, self.p_z())
-        return log_prob - kl_div, log_prob.detach(), kl_div.detach(), q_z_given_x
+        beta = self.beta
+        return log_prob - beta*kl_div + beta*kl_div.detach() - kl_div.detach(), log_prob.detach(), kl_div.detach(), q_z_given_x
 
     def sample(self, batch_size):
         z = self.p_z().sample(batch_size)
-        decode = self.p_x_given_z(z)
+        flatten_z = z.flatten(-2)
+        decode = self.p_x_given_z(flatten_z)
         return decode.sample()
 
     def reconstruct_log_prob(self, q_z_given_x, x):
@@ -78,6 +82,7 @@ parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
 parser.add_argument("--num_states", default=8, type=int)
 parser.add_argument("--num_vars", default=20, type=int)
+parser.add_argument("--beta", default=1.0, type=float)
 parser.add_argument("--dummy_run", action="store_true")
 parser.add_argument("--decoder_type", default="simple_pixelcnn")
 ns = parser.parse_args()
@@ -108,15 +113,18 @@ match ns.decoder_type:
     case _:
         raise RuntimeError(f"decoder_type {ns.decoder_type} not recognised.")
 
-digit_distribution = VAE(ns.num_vars, ns.num_states, decoder_type)
+digit_distribution = VAE(ns.num_vars, ns.num_states, decoder_type, ns.beta)
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks_list = [
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
-    callbacks.tb_log_image(tb_writer, "generated_images", tb_vae_reconstruct(digit_distribution, example_valid_images))]
+    callbacks.tb_log_image(tb_writer, "reconstruct_images", tb_vae_reconstruct(digit_distribution, example_valid_images)),
+    callbacks.tb_log_image(tb_writer, "generated_images", pygen_models_callbacks.sample_images(digit_distribution))
+]
 if ns.images_folder is not None:
-    epoch_end_callbacks_list.append(callbacks.file_log_image(ns.images_folder, "generated_images", tb_vae_reconstruct(digit_distribution, example_valid_images)))
+    epoch_end_callbacks_list.append(callbacks.file_log_image(ns.images_folder, "reconstruct_images", tb_vae_reconstruct(digit_distribution, example_valid_images)))
+    epoch_end_callbacks_list.append(callbacks.file_log_image(ns.images_folder, "generated_images", pygen_models_callbacks.sample_images(digit_distribution)))
 epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
 train.train(digit_distribution, train_dataset, pygen_models_train.vae_objective(),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),

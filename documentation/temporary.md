@@ -83,3 +83,7 @@ $$
 $$
 = I_\phi[X,Z] + H[X,Z] + E_{x \sim p(x)}[E_{z \sim q(z|x)} [Log(p(x))]]
 $$
+
+$$
+= I_\phi[X,Z] + H[X,Z] + E_{x \sim p(x)}[[Log(p(x))]
+$$

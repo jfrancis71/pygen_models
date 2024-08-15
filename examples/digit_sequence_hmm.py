@@ -44,7 +44,9 @@ mnist_hmm = hmm.HMMAnalytic(num_steps, ns.num_states, layer_pixelcnn_bernoulli)
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.tb_conditional_images(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
+    callbacks.tb_log_image(tb_writer, "conditional_generated_images",
+                           callbacks.demo_conditional_images(mnist_hmm, torch.eye(ns.num_states),
+                                                             num_samples=2)),
     callbacks.tb_epoch_log_metrics(tb_writer),
     pygen_models_callbacks.TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
     pygen_models_callbacks.TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),

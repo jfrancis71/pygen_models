@@ -4,13 +4,12 @@ import torch.nn as nn
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.categorical import Categorical
-from torch.distributions.one_hot_categorical import OneHotCategorical
 import torchvision
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 from pygen.neural_nets import classifier_net
 import pygen_models.layers.pixelcnn as pixelcnn_layer
-import pygen_models.layers.one_hot_categorical as layer_one_hot_categorical
+import pygen_models.layers.independent_one_hot_categorical as layer_one_hot_categorical
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.distributions.hmm as pygen_hmm
 from pygen_models.datasets import sequential_mnist
@@ -28,18 +27,17 @@ class HMMVAE(pygen_hmm.HMM):
                                                                               [28, 28]), conditional_sp_distribution)
         super().__init__(num_steps, num_states, layer_pixelcnn_bernoulli)
         self.q = nn.Sequential(nn_thread.NNThread(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), 2),
-            layer_one_hot_categorical.OneHotCategorical())
+            nn.Flatten(),
+            layer_one_hot_categorical.IndependentOneHotCategorical(event_shape=[self.num_steps], num_classes=self.num_states))
 
     def log_prob(self, x):
         return self.elbo(x)
 
     def elbo(self, x):
-        q_logits = self.q(x).logits
-        base_distribution = OneHotCategorical(logits=q_logits)
-        q_dist = torch.distributions.independent.Independent(base_distribution, reinterpreted_batch_ndims=1)
+        q_dist = self.q(x)
         reconstruct_log_prob = self.reconstruct_log_prob(q_dist, x)
         kl_div = self.kl_div(q_dist)
-        return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div, Categorical(q_dist.base_dist.logits[0])
+        return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div, q_dist
 
     def kl_div(self, q_dist):
         kl_div = self.kl_div_cat(Categorical(logits=q_dist.base_dist.logits[:, 0]), self.prior_state_distribution())
@@ -74,50 +72,6 @@ class HMMAnalytic(HMMVAE):
         return log_prob.sum(axis=[1,2])
 
 
-class HMMMultiSample(HMMVAE):
-    def __init__(self, num_steps, num_states, num_z_samples):
-        super().__init__(num_steps, num_states)
-        self.num_z_samples = num_z_samples
-
-    def reconstruct_log_prob(self, q_dist, x):
-        log_probs = [self.sample_reconstruct_log_prob(q_dist, x) for _ in range(self.num_z_samples)]
-        log_prob = torch.mean(torch.stack(log_probs), dim=0)
-        return log_prob
-
-
-class HMMUniform(HMMMultiSample):
-    def __init__(self, num_steps, num_states, num_z_samples):
-        super().__init__(num_steps, num_states, num_z_samples)
-
-    def sample_reconstruct_log_prob(self, q_dist, x):  # Using uniform sampling
-        batch_size = q_dist.shape[0]
-        log_prob = torch.zeros([x.shape[0]])
-        for t in range(x.shape[1]):
-            uniform_dist = torch.distributions.one_hot_categorical.OneHotCategorical(
-                logits=torch.zeros([batch_size, self.num_states]))
-            z = uniform_dist.sample().float()
-            q_probs = uniform_dist.log_prob(z).exp()
-            log_prob_t = self.observation_model(z).log_prob(x[:, t])
-            log_prob += self.num_states * q_probs * log_prob_t
-        return log_prob
-
-
-class HMMReinforce(HMMMultiSample):
-    def __init__(self, num_steps, num_states, num_z_samples):
-        super().__init__(num_steps, num_states, num_z_samples)
-
-    def sample_reconstruct_log_prob(self, q_dist, x):
-        log_prob = torch.zeros([x.shape[0]])
-        for t in range(x.shape[1]):
-            q_distribution = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist.base_dist.logits[:, t])
-            z = q_distribution.sample()
-            q_logits = q_distribution.log_prob(z)
-            log_prob_t = self.observation_model(z).log_prob(x[:, t])
-            reinforce = log_prob_t.detach() * q_logits
-            log_prob += log_prob_t + reinforce - reinforce.detach()
-        return log_prob
-
-
 class HMMReinforceBaseline(HMMVAE):
     def __init__(self, num_steps, num_states, num_z_samples):
         super().__init__(num_steps, num_states)
@@ -133,15 +87,16 @@ class HMMReinforceBaseline(HMMVAE):
         log_probs = [self.sample_reconstruct_log_prob(q_dist, x, baseline_log_prob) for _ in range(self.num_z_samples)]
         log_prob = torch.mean(torch.stack(log_probs), dim=0)
         sum_baseline_log_prob = torch.sum(baseline_log_prob, axis=1)
+
         return log_prob + sum_baseline_log_prob - sum_baseline_log_prob.detach()
 
     def sample_reconstruct_log_prob(self, q_dist, x, baseline_log_prob):
         z = q_dist.sample()
-        q_logits = q_dist.log_prob(z)
+        q_logits = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist.base_dist.logits).log_prob(z)
         pz_given_x = self.observation_model(z)
-        logits_pz_given_x = pz_given_x.log_prob(x).sum(axis=1)
-        reinforce = (logits_pz_given_x - baseline_log_prob.detach().sum(axis=1)) * q_logits
-        log_prob = logits_pz_given_x + reinforce - reinforce.detach()
+        logits_pz_given_x = pz_given_x.log_prob(x)
+        reinforce = ((logits_pz_given_x.detach() - baseline_log_prob.detach()) * q_logits).sum(axis=1)
+        log_prob = logits_pz_given_x.sum(axis=1) + reinforce - reinforce.detach()
         return log_prob
 
 
@@ -171,10 +126,6 @@ validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_da
 match ns.mode:
     case "analytic":
         mnist_hmm = HMMAnalytic(num_steps, ns.num_states)
-    case "uniform":
-        mnist_hmm = HMMUniform(num_steps, ns.num_states, ns.num_z_samples)
-    case "reinforce":
-        mnist_hmm = HMMReinforce(num_steps, ns.num_states, ns.num_z_samples)
     case "reinforce_baseline":
         mnist_hmm = HMMReinforceBaseline(num_steps, ns.num_states, ns.num_z_samples)
     case _:
@@ -182,12 +133,14 @@ match ns.mode:
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.tb_conditional_images(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
+    callbacks.tb_log_image(tb_writer, "conditional_generated_images",
+                           callbacks.demo_conditional_images(mnist_hmm, torch.eye(ns.num_states),
+                                                             num_samples=2)),
     callbacks.tb_epoch_log_metrics(tb_writer),
     pygen_models_callbacks.TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
     pygen_models_callbacks.TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
 ])
-train.train(mnist_hmm, train_dataset, pygen_models_train.vae_objective(False),
+train.train(mnist_hmm, train_dataset, pygen_models_train.vae_objective(),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False)

@@ -8,7 +8,7 @@ from pygen_models.neural_nets import simple_pixelcnn_net
 
 def channel_last(x: torch.Tensor):
     batch_dims = len(x.shape)-3
-    return x.permute(list(range(batch_dims)) + [batch_dims+2, batch_dims+1, batch_dims])
+    return x.permute(list(range(batch_dims)) + [batch_dims+1, batch_dims+2, batch_dims])
 
 class PixelCNN(nn.Module):
     def __init__(self, pixelcnn_net, event_shape, layer, params):
@@ -22,6 +22,7 @@ class PixelCNN(nn.Module):
         else:
             self.batch_shape = torch.Size(params.shape[:-3])
         self.params = params
+        self.output_channels = self.layer.params_size()
         self.pixelcnn_net = pixelcnn_net
 
     def log_prob(self, value):
@@ -33,7 +34,7 @@ class PixelCNN(nn.Module):
             if len(nn_params.shape) == 3:
                 nn_params = nn_params.unsqueeze(0).repeat(sample_shape+torch.Size([1]*len(nn_params.shape)))
         logits = self.pixelcnn_net((nn_values*2.0)-1.0, conditional=nn_params)
-        reshape_logits = logits.reshape(sample_shape + self.batch_shape + self.event_shape)
+        reshape_logits = logits.reshape(sample_shape + self.batch_shape + torch.Size([self.output_channels, self.event_shape[1], self.event_shape[2]]))
         layer_logits = channel_last(reshape_logits)
         permute_samples = channel_last(value)
         return self.layer(layer_logits).log_prob(permute_samples).sum(axis=[-1, -2])

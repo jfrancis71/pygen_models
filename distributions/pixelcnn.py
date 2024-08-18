@@ -79,8 +79,8 @@ def make_bernoulli_base_distribution():
     return lambda event_shape: bernoulli_layer.IndependentBernoulli(event_shape=event_shape)
 
 
-def make_quantized_base_distribution():
-    return lambda event_shape: ql.IndependentQuantizedDistribution(event_shape=event_shape)
+def make_quantized_base_distribution(add_noise=False):
+    return lambda event_shape: ql.IndependentQuantizedDistribution(event_shape=event_shape, add_noise=add_noise)
 
 
 def make_pixelcnn_net(num_resnet=3):

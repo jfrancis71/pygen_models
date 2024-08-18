@@ -6,6 +6,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
+import pygen.distributions.quantized_distribution as q_distribution
 import pygen_models.distributions.pixelcnn as pixelcnn
 import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
@@ -38,7 +39,11 @@ match ns.dataset:
         image_distribution = pixelcnn.make_pixelcnn(
             pixelcnn.make_bernoulli_base_distribution(), net, event_shape=[1, 28, 28])
     case "cifar10":
-        transform = transforms.Compose([transforms.ToTensor(), train.DevicePlacement()])
+        num_buckets = 8
+        transform = transforms.Compose([transforms.ToTensor(),
+            transforms.Lambda(
+                lambda value: q_distribution.discretize(value, num_buckets)),
+                train.DevicePlacement()])
         dataset = datasets.CIFAR10(ns.datasets_folder, train=True, download=False, transform=transform)
         data_split = [45000, 5000]
         event_shape = [3, 32, 32]

@@ -8,6 +8,7 @@ import torchvision.datasets as datasets
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 import pygen.layers.one_hot as one_hot
+import pygen.distributions.quantized_distribution as q_distribution
 import pygen_models.layers.pixelcnn as pixelcnn
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 
@@ -24,6 +25,7 @@ parser.add_argument("--max_epoch", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
+spatial_intermediate_channels = 16
 torch.set_default_device(ns.device)
 match ns.net:
     case "simple_pixelcnn_net": net = pixelcnn.make_simple_pixelcnn_net()
@@ -36,14 +38,15 @@ if ns.dataset == "mnist":
     event_shape = [1, 28, 28]
     data_split = [55000, 5000]
     conditional_sp_distribution = pixelcnn.make_pixelcnn_layer(pixelcnn_dist.make_bernoulli_base_distribution(),
-        net, event_shape, 3)
+        net, event_shape, spatial_intermediate_channels)
 elif ns.dataset == "cifar10":
-    transform = transforms.Compose([transforms.ToTensor(), train.DevicePlacement()])
+    num_buckets = 8
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda value: q_distribution.discretize(value, num_buckets)), train.DevicePlacement()])
     dataset = datasets.CIFAR10(ns.datasets_folder, train=True, download=False, transform=transform)
     event_shape = [3, 32, 32]
     data_split = [45000, 5000]
     conditional_sp_distribution = pixelcnn.make_pixelcnn_layer(pixelcnn_dist.make_quantized_base_distribution(),
-        net, event_shape, 3)
+        net, event_shape, spatial_intermediate_channels)
 else:
     raise RuntimeError(f"{ns.dataset} not recognized.")
 train_dataset, validation_dataset = random_split(dataset, data_split,
@@ -51,7 +54,7 @@ train_dataset, validation_dataset = random_split(dataset, data_split,
 tb_writer = SummaryWriter(ns.tb_folder)
 conditional_distribution = nn.Sequential(
     one_hot.OneHot(10),
-    pixelcnn.SpatialExpand(10, 3, event_shape[1:]),
+    pixelcnn.SpatialExpand(10, spatial_intermediate_channels, event_shape[1:]),
     conditional_sp_distribution)
 epoch_end_callbacks = [
     callbacks.tb_log_image(tb_writer, "conditional_generated_images",

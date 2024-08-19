@@ -12,62 +12,50 @@ from pygen.train import callbacks
 from pygen.neural_nets import classifier_net
 import pygen.train.train as train
 import pygen.layers.independent_bernoulli as bernoulli_layer
-import pygen_models.layers.independent_one_hot_categorical as one_hot_categorical
-import pygen_models.layers.pixelcnn as pixelcnn_layer
-import pygen_models.distributions.pixelcnn as pixelcnn_dist
+import pygen.layers.independent_categorical as independent_categorical
+import pygen_models.distributions.discrete_vae as discrete_vae
 import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
+import pygen_models.distributions.pixelcnn as pixelcnn_dist
+import pygen_models.layers.pixelcnn as pixelcnn_layer
 
 
-class VAE(nn.Module):
-    def __init__(self, num_vars, num_states, p_x_given_z, beta):
+class IndependentLatentModel(nn.Module):
+    def __init__(self, num_vars, num_states, decoder_type):
         super().__init__()
-        self.num_states = num_states
         self.num_vars = num_vars
-        self.p_x_given_z = p_x_given_z
-        self.q_z_given_x = nn.Sequential(
-            classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states*self.num_vars),
-            one_hot_categorical.IndependentOneHotCategorical([self.num_vars], self.num_states),
-        )
-        self.logits_p_z = torch.zeros([self.num_states])
-        self.identity_matrix = torch.eye(num_states).float()
-        self.beta = beta
+        self.num_states = num_states
+        p_z_logits = torch.zeros([self.num_vars, self.num_states], requires_grad=False)
+        base_dist = torch.distributions.categorical.Categorical(logits=p_z_logits)
+        self.p_z_dist = torch.distributions.independent.Independent(base_distribution=base_dist,
+            reinterpreted_batch_ndims=1)
+        match decoder_type:
+            case "simple_pixelcnn":
+                intermediate_channels = 8
+                net = pixelcnn_layer.make_simple_pixelcnn_net()
+                conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
+                pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
+                self.p_x_given_z = nn.Sequential(nn.Flatten(),
+                    pixelcnn_layer.SpatialExpand(ns.num_vars * ns.num_states, intermediate_channels, [28, 28]),
+                    conditional_sp_distribution)
+            case "basic":
+                self.p_x_given_z = nn.Sequential(nn.Flatten(),
+                    nn.Linear(ns.num_vars * ns.num_states, 256), nn.ReLU(),
+                    nn.Linear(256, 512), nn.ReLU(),
+                    nn.Linear(512, 784),
+                    bernoulli_layer.IndependentBernoulli([1, 28, 28]))
+            case _:
+                raise RuntimeError(f"decoder_type {ns.decoder_type} not recognised.")
 
     def p_z(self):
-        base_dist = torch.distributions.one_hot_categorical.OneHotCategorical(logits=torch.zeros([self.num_vars, self.num_states]))
-        return torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
-
-    def kl_div(self, p, q):
-        kl_div = torch.sum(p.base_dist.probs * (p.base_dist.logits - q.base_dist.logits), axis=-1)
-        return kl_div.sum(axis=-1)
-
-    def log_prob(self, x):
-        return self.elbo(x)[0]
-
-    def elbo(self, x):
-        q_z_given_x = self.q_z_given_x(x)
-        log_prob = self.reconstruct_log_prob(q_z_given_x, x)
-        kl_div = self.kl_div(q_z_given_x, self.p_z())
-        beta = self.beta
-        return log_prob - beta*kl_div + beta*kl_div.detach() - kl_div.detach(), log_prob.detach(), kl_div.detach(), q_z_given_x
-
-    def sample(self, batch_size):
-        z = self.p_z().sample(batch_size)
-        flatten_z = z.flatten(-2)
-        decode = self.p_x_given_z(flatten_z)
-        return decode.sample()
-
-    def reconstruct_log_prob(self, q_z_given_x, x):
-        z_logits = q_z_given_x.base_dist.logits
-        z = nn.functional.gumbel_softmax(z_logits, hard=True)
-        nz = z.flatten(-2)
-        reconstruct_log_prob = self.p_x_given_z(nz).log_prob(x)
-        return reconstruct_log_prob
+        return self.p_z_dist
 
 def tb_vae_reconstruct(vae, images):
     def _fn():
         z = vae.q_z_given_x(images).sample()
-        reconstruct_images = vae.p_x_given_z(z.flatten(-2)).sample()
+        one_hot_z = nn.functional.one_hot(z, vae.latent_model.num_states).float()
+        flatten_z = one_hot_z.flatten(-2)
+        reconstruct_images = vae.latent_model.p_x_given_z(flatten_z).sample()
         imglist = torch.cat([images, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
         return grid_image
@@ -95,25 +83,13 @@ mnist_dataset = torchvision.datasets.MNIST(
     transform=transform)
 train_dataset, validation_dataset = random_split(mnist_dataset, [50000, 10000])
 torch.set_default_device(ns.device)
-match ns.decoder_type:
-    case "simple_pixelcnn":
-        intermediate_channels = 8
-        net = pixelcnn_layer.make_simple_pixelcnn_net()
-        conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
-            pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
-        decoder_type = nn.Sequential(
-            pixelcnn_layer.SpatialExpand(ns.num_vars*ns.num_states, intermediate_channels, [28, 28]),
-            conditional_sp_distribution)
-    case "basic":
-        decoder_type = nn.Sequential(
-            nn.Linear(ns.num_vars * ns.num_states, 256), nn.ReLU(),
-            nn.Linear(256, 512), nn.ReLU(),
-            nn.Linear(512, 784),
-            bernoulli_layer.IndependentBernoulli([1, 28, 28]))
-    case _:
-        raise RuntimeError(f"decoder_type {ns.decoder_type} not recognised.")
 
-digit_distribution = VAE(ns.num_vars, ns.num_states, decoder_type, ns.beta)
+encoder = nn.Sequential(
+    classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states*ns.num_vars),
+    independent_categorical.IndependentCategorical([ns.num_vars], ns.num_states))
+latent_model = IndependentLatentModel(ns.num_vars, ns.num_states, ns.decoder_type)
+digit_distribution = discrete_vae.DiscreteVAE(latent_model, encoder)
+
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks_list = [

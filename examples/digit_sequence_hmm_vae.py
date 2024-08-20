@@ -57,47 +57,11 @@ class HMMVAE(pygen_hmm.HMM):
         kl_div = self.kl_div_cat(pz, pz_given_x)
         return kl_div
 
-
-class HMMAnalytic(HMMVAE):
-    def __init__(self, num_steps, num_states):
-        super().__init__(num_steps, num_states)
-
     def reconstruct_log_prob(self, q_dist, x):
-        """encoder_dist is tensor of shape [B, T, N], x has shape [B, T, C, Y, X]"""
-        log_prob = torch.zeros([x.shape[0], x.shape[1], self.num_states])
-        for t in range(x.shape[1]):
-            for s in range(self.num_states):
-                one_hot = torch.nn.functional.one_hot(torch.tensor(s), self.num_states).float()
-                log_prob[:, t, s] = torch.exp(q_dist.base_dist.logits[:, t, s]) * self.observation_model(one_hot).log_prob(x[:, t])
-        return log_prob.sum(axis=[1,2])
-
-
-class HMMReinforceBaseline(HMMVAE):
-    def __init__(self, num_steps, num_states, num_z_samples):
-        super().__init__(num_steps, num_states)
-        net = pixelcnn_dist.make_simple_pixelcnn_net()
-        self.baseline_dist = pixelcnn_dist.make_pixelcnn(
-            pixelcnn_dist.make_bernoulli_base_distribution(), net, event_shape=[1, 28, 28])
-        self.num_z_samples = num_z_samples
-
-    def reconstruct_log_prob(self, q_dist, x):
-        baseline_log_prob = torch.zeros([x.shape[0], x.shape[1]])
-        for t in range(x.shape[1]):
-            baseline_log_prob[:, t] = self.baseline_dist.log_prob(x[:, t])
-        log_probs = [self.sample_reconstruct_log_prob(q_dist, x, baseline_log_prob) for _ in range(self.num_z_samples)]
-        log_prob = torch.mean(torch.stack(log_probs), dim=0)
-        sum_baseline_log_prob = torch.sum(baseline_log_prob, axis=1)
-
-        return log_prob + sum_baseline_log_prob - sum_baseline_log_prob.detach()
-
-    def sample_reconstruct_log_prob(self, q_dist, x, baseline_log_prob):
-        z = q_dist.sample()
-        q_logits = torch.distributions.one_hot_categorical.OneHotCategorical(logits=q_dist.base_dist.logits).log_prob(z)
-        pz_given_x = self.observation_model(z)
-        logits_pz_given_x = pz_given_x.log_prob(x)
-        reinforce = ((logits_pz_given_x.detach() - baseline_log_prob.detach()) * q_logits).sum(axis=1)
-        log_prob = logits_pz_given_x.sum(axis=1) + reinforce - reinforce.detach()
-        return log_prob
+        z_logits = q_dist.base_dist.logits
+        one_hot_z = nn.functional.gumbel_softmax(z_logits, hard=True)
+        reconstruct_log_probs = self.observation_model(one_hot_z).log_prob(x)
+        return reconstruct_log_probs.sum(axis=1)
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Sequence HMM')
@@ -105,9 +69,7 @@ parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
-parser.add_argument("--mode", default="analytic")
 parser.add_argument("--num_states", default=10, type=int)
-parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
@@ -123,13 +85,7 @@ train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [550
 train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, num_steps, ns.dummy_run)
 validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, num_steps, ns.dummy_run)
 
-match ns.mode:
-    case "analytic":
-        mnist_hmm = HMMAnalytic(num_steps, ns.num_states)
-    case "reinforce_baseline":
-        mnist_hmm = HMMReinforceBaseline(num_steps, ns.num_states, ns.num_z_samples)
-    case _:
-        raise RuntimeError(f"mode {ns.mode} not recognised.")
+mnist_hmm = HMMVAE(num_steps, ns.num_states)
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([

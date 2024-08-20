@@ -16,52 +16,33 @@ from pygen_models.datasets import sequential_mnist
 import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
 import pygen_models.utils.nn_thread as nn_thread
+from pygen_models.distributions.discrete_vae import DiscreteVAE
 
 
-class HMMVAE(pygen_hmm.HMM):
-    def __init__(self, num_steps, num_states):
+class ObservationDistribution(nn.Module):
+    def __init__(self, base_layer, params):
+        super().__init__()
+        self.base_layer = base_layer
+        self.params = params
+
+    def log_prob(self, x):
+        return self.base_layer(self.params).log_prob(x).sum(axis=1)
+
+    def sample(self):
+        return self.base_layer(self.params).sample()
+
+
+class ObservationLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
         conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
             pixelcnn_dist.make_bernoulli_base_distribution(),
             pixelcnn_layer.make_simple_pixelcnn_net(), [1, 28, 28], ns.num_states)
-        layer_pixelcnn_bernoulli = nn.Sequential(pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,
+        self.layer_pixelcnn_bernoulli = nn.Sequential(pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,
                                                                               [28, 28]), conditional_sp_distribution)
-        super().__init__(num_steps, num_states, layer_pixelcnn_bernoulli)
-        self.q = nn.Sequential(nn_thread.NNThread(classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states), 2),
-            nn.Flatten(),
-            layer_one_hot_categorical.IndependentOneHotCategorical(event_shape=[self.num_steps], num_classes=self.num_states))
 
-    def log_prob(self, x):
-        return self.elbo(x)
-
-    def elbo(self, x):
-        q_dist = self.q(x)
-        reconstruct_log_prob = self.reconstruct_log_prob(q_dist, x)
-        kl_div = self.kl_div(q_dist)
-        return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div, q_dist
-
-    def kl_div(self, q_dist):
-        kl_div = self.kl_div_cat(Categorical(logits=q_dist.base_dist.logits[:, 0]), self.markov_chain.initial_state_distribution())
-        for t in range(1, self.num_steps):
-            for s in range(self.num_states):
-                kl_div += torch.exp(q_dist.base_dist.logits[:, t - 1, s]) * self.kl_div_cat(Categorical(logits=q_dist.base_dist.logits[:, t]),
-                    Categorical(logits=self.markov_chain.state_transition_distribution().logits[s]))
-        return kl_div
-
-    def kl_div_cat(self, p, q):
-        kl_div = torch.sum(p.probs * (p.logits - q.logits), axis=1)
-        return kl_div
-
-    def reg(self, observations):  # x is B*Event_shape, ie just one element of sequence
-        pz_given_x = self.q(observations[:, 0])
-        pz = Categorical(logits=pz_given_x.logits*0.0)
-        kl_div = self.kl_div_cat(pz, pz_given_x)
-        return kl_div
-
-    def reconstruct_log_prob(self, q_dist, x):
-        z_logits = q_dist.base_dist.logits
-        one_hot_z = nn.functional.gumbel_softmax(z_logits, hard=True)
-        reconstruct_log_probs = self.observation_model(one_hot_z).log_prob(x)
-        return reconstruct_log_probs.sum(axis=1)
+    def forward(self, params):
+        return ObservationDistribution(self.layer_pixelcnn_bernoulli, params)
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Sequence HMM')
@@ -85,13 +66,16 @@ train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [550
 train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, num_steps, ns.dummy_run)
 validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, num_steps, ns.dummy_run)
 
-mnist_hmm = HMMVAE(num_steps, ns.num_states)
+q = nn.Sequential(nn_thread.NNThread(classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states), 2),
+            nn.Flatten(),
+            layer_one_hot_categorical.IndependentOneHotCategorical(event_shape=[num_steps], num_classes=ns.num_states))
+mnist_hmm = DiscreteVAE(pygen_hmm.HMM(num_steps, ns.num_states, ObservationLayer()), q)
 
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.tb_log_image(tb_writer, "conditional_generated_images",
-                           callbacks.demo_conditional_images(mnist_hmm, torch.eye(ns.num_states),
-                                                             num_samples=2)),
+#    callbacks.tb_log_image(tb_writer, "conditional_generated_images",
+#                           callbacks.demo_conditional_images(mnist_hmm, torch.eye(ns.num_states),
+#                                                             num_samples=2)),
     callbacks.tb_epoch_log_metrics(tb_writer),
     pygen_models_callbacks.TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
     pygen_models_callbacks.TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),

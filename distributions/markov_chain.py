@@ -10,6 +10,7 @@ class MarkovChain(nn.Module):
         self.state_transition_matrix = \
             nn.Parameter(torch.randn(num_states, num_states))  # (state, state')
         self.num_steps = num_steps
+        self.num_states = num_states
 
     def log_prob(self, x):
         log_prob = torch.distributions.categorical.Categorical(logits=self.initial_state_vector).log_prob(x[:,0])

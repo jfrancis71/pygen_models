@@ -1,6 +1,4 @@
-import torch
 from torch import nn
-from torch.distributions.categorical import Categorical
 import pygen_models.distributions.markov_chain as markov_chain
 
 
@@ -35,3 +33,9 @@ class HMM(nn.Module):
 
     def forward(self, z):
         return self.observation_model(z)
+
+    def p_z(self):
+        return self.markov_chain
+
+    def p_x_given_z(self, one_hot_z):
+        return self.observation_model(one_hot_z)

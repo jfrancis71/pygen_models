@@ -30,7 +30,7 @@ class TBSequenceImageCallback:
         sample_size = 8
         imglist = [trainer_state.trainable.sample() for _ in range(sample_size)]
         imglist = torch.clip(torch.cat(imglist, axis=0), 0.0, 1.0)  # pylint: disable=E1101
-        grid_image = torchvision.utils.make_grid(imglist, padding=10, nrow=trainer_state.trainable.num_steps)
+        grid_image = torchvision.utils.make_grid(imglist, padding=10, nrow=trainer_state.trainable.latent_model.markov_chain.num_steps)
         self.tb_writer.add_image(self.tb_name, grid_image, trainer_state.epoch_num)
 
 
@@ -41,7 +41,7 @@ class TBSequenceTransitionMatrixCallback:
         self.tb_name = tb_name
 
     def __call__(self, trainer_state):
-        image = trainer_state.trainable.markov_chain.state_transition_distribution().probs.detach().unsqueeze(0).cpu().numpy()
+        image = trainer_state.trainable.latent_model.markov_chain.state_transition_distribution().probs.detach().unsqueeze(0).cpu().numpy()
         self.tb_writer.add_image(self.tb_name, image, trainer_state.epoch_num)
 
 

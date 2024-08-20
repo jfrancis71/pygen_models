@@ -40,11 +40,11 @@ class HMMVAE(pygen_hmm.HMM):
         return reconstruct_log_prob - kl_div, reconstruct_log_prob, kl_div, q_dist
 
     def kl_div(self, q_dist):
-        kl_div = self.kl_div_cat(Categorical(logits=q_dist.base_dist.logits[:, 0]), self.prior_state_distribution())
+        kl_div = self.kl_div_cat(Categorical(logits=q_dist.base_dist.logits[:, 0]), self.markov_chain.initial_state_distribution())
         for t in range(1, self.num_steps):
             for s in range(self.num_states):
                 kl_div += torch.exp(q_dist.base_dist.logits[:, t - 1, s]) * self.kl_div_cat(Categorical(logits=q_dist.base_dist.logits[:, t]),
-                    Categorical(logits=self.state_transition_distribution().logits[s]))
+                    Categorical(logits=self.markov_chain.state_transition_distribution().logits[s]))
         return kl_div
 
     def kl_div_cat(self, p, q):

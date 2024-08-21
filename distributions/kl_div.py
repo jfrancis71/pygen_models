@@ -20,11 +20,10 @@ def kl_div_independent_categorical(p, q):
     return kl_div.sum(axis=-1)
 
 def kl_div_independent_categorical_markov_chain(p, q):
-    kl_div = kl_div_categorical(Categorical(logits=p.base_dist.logits[:, 0]), q.initial_state_distribution())
-    for t in range(1, q.num_steps):
-        for s in range(q.num_states):
-            kl_div += torch.exp(p.base_dist.logits[:, t - 1, s]) * kl_div_categorical(Categorical(logits=p.base_dist.logits[:, t]),
-                Categorical(logits=q.state_transition_distribution().logits[s]))
+    # This generates a gradient for the parameter of the expectation, but does not generate a gradient for the
+    # expectation sample itself (due to the sampling step). Does this matter?
+    sample_z = p.sample()
+    kl_div = p.log_prob(sample_z).exp() * (p.log_prob(sample_z) - q.log_prob(sample_z))
     return kl_div
 
 def kl_div_categorical(p, q):

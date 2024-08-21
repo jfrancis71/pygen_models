@@ -1,3 +1,4 @@
+import torch.distributions.independent
 from torch import nn
 import pygen_models.distributions.markov_chain as markov_chain
 
@@ -38,4 +39,6 @@ class HMM(nn.Module):
         return self.markov_chain
 
     def p_x_given_z(self, one_hot_z):
-        return self.observation_model(one_hot_z)
+        observation_dist = self.observation_model(one_hot_z)
+        observations_dist = torch.distributions.independent.Independent(observation_dist, reinterpreted_batch_ndims=1)
+        return observations_dist

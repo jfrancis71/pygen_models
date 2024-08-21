@@ -49,7 +49,7 @@ class PixelCNN(nn.Module):
                     else:
                         params = params.unsqueeze(0).repeat(sample_shape[0], 1, 1, 1)
                 elif len(params.shape) == 4:
-                    if sample_shape is None:
+                    if sample_shape is None or sample_shape == torch.Size([]):
                         params = params
                     else:
                         params = params.repeat(sample_shape[0], 1, 1, 1)

@@ -9,7 +9,7 @@ import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 from pygen.neural_nets import classifier_net
 import pygen_models.layers.pixelcnn as pixelcnn_layer
-import pygen_models.layers.independent_one_hot_categorical as layer_one_hot_categorical
+import pygen.layers.independent_categorical as layer_categorical
 import pygen_models.distributions.pixelcnn as pixelcnn_dist
 import pygen_models.distributions.hmm as pygen_hmm
 from pygen_models.datasets import sequential_mnist
@@ -68,7 +68,7 @@ validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_da
 
 q = nn.Sequential(nn_thread.NNThread(classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states), 2),
             nn.Flatten(),
-            layer_one_hot_categorical.IndependentOneHotCategorical(event_shape=[num_steps], num_classes=ns.num_states))
+            layer_categorical.IndependentCategorical(event_shape=[num_steps], num_classes=ns.num_states))
 mnist_hmm = DiscreteVAE(pygen_hmm.HMM(num_steps, ns.num_states, ObservationLayer()), q)
 
 tb_writer = SummaryWriter(ns.tb_folder)

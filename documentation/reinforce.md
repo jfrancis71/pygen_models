@@ -44,26 +44,57 @@ $$
 
 ### Reinforce with Baseline
 
-We demonstrate:
+We show:
 
 $$
-\nabla_\theta[E_{x \sim p_\theta(x)}[f(x)-f(y)]] = \nabla_\theta[E_{x \sim p_\theta(x)}[f(x)]]
+\nabla_\theta[E_{x \sim p_\theta(x)}[f(x)]] = E_{x \sim p_\theta(x)}[(f(x)-c) \nabla_\theta[Log(p_\theta(x))]]
 $$
 
-Both the derivative and expectation are linear so:
+and this holds true for any expression c (which does not depend on x).
 
 $$
-\nabla_\theta[E_{x \sim p_\theta(x)}[f(x)-f(y)]] = \nabla_\theta[E_{x \sim p_\theta(x)}[f(x)]] - \nabla_\theta[E_{x \sim p_\theta(x)}[f(y)]]
+= E_{x \sim p_\theta(x)}[f(x) \nabla_\theta[Log(p_\theta(x))]] + E_{x \sim p_\theta(x)}[c \nabla_\theta[Log(p_\theta(x))]]
 $$
 
-Expectation over a constant is a constant, and derivative of constant is zero:
+Now the 2nd term is zero by EPGL lemma:
 
 $$
-\nabla_\theta[E_{x \sim p_\theta(x)}[f(y)]] = \nabla_\theta[f(y)] = 0
+= c E_{x \sim p_\theta(x)}[\nabla_\theta[Log(p_\theta(x))]] = 0
 $$
 
-Hence it is shown.
+Application: computing the $\phi$ gradient on a VAE reconstruction term
+
+$$
+\nabla_\phi[E_{z \sim q_\phi(z)}[log p(x|z)]] = E_{z \sim q_\phi(z)}[(log p(x|z)- log p(x)) \nabla_\phi[Log(q_\phi(z))]]
+$$
+
+where log p(x) has taken on the c role.
+
+### EPGL Lemma
+
+States:
+
+$$
+E_{x \sim p_\theta(x)}[\nabla_\theta[Log(p_\theta(x))]] = 0
+$$
+
+Expand:
+
+$$
+= \sum_x p_\theta(x) \nabla_\theta[Log(p_\theta(x))]
+$$
+
+$$
+= \sum_x p_\theta(x) \frac{1}{p_\theta(x)} \nabla_\theta[p_\theta(x)] = \sum_x \nabla_\theta[p_\theta(x)]
+$$
+
+$$
+= \nabla_\theta \sum_x p_\theta(x) = \nabla_\theta [1] = 0
+$$
+
 
 ### Reference:
 CS229 Lecture notes, Part XV Policy Gradient (REINFORCE), Tengyu Ma, Stanford University.
 (Note I have replaced integration with summation in my interpretation above)
+
+OpenAI Spinning Up Notes: [https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html#expected-grad-log-prob-lemma]

@@ -2,6 +2,8 @@
 
 Contains some example models. Uses the training loop from pygen.
 
+Current Status: 05/09/2024. This is a personal project (you are welcome to use if find useful) and is in a very immature state of development. The pixelcnn and conditional pixelcnn examples are somewhat stable, but generally other examples are highly experimental and speculative and probably not of general interest at the moment.
+
 To train an mnist PixelCNN:
 
 ```

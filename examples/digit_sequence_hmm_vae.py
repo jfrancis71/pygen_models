@@ -8,15 +8,16 @@ from torchvision.utils import make_grid
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 from pygen.neural_nets import classifier_net
-import pygen_models.layers.pixelcnn as pixelcnn_layer
 import pygen.layers.independent_categorical as layer_categorical
-import pygen_models.distributions.pixelcnn as pixelcnn_dist
+import pygen.layers.independent_bernoulli as bernoulli_layer
+import pygen_models.layers.pixelcnn as pixelcnn_layer
 import pygen_models.distributions.hmm as pygen_hmm
 from pygen_models.datasets import sequential_mnist
 import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
 import pygen_models.utils.nn_thread as nn_thread
 from pygen_models.distributions.discrete_vae import DiscreteVAE
+from pygen_models.neural_nets import simple_pixelcnn_net
 
 
 def vae_reconstruct(vae, image_seq):
@@ -42,12 +43,12 @@ ns = parser.parse_args()
 
 num_steps = 5
 torch.set_default_device(ns.device)
+
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
     train.DevicePlacement()])
 mnist_dataset = torchvision.datasets.MNIST(
     ns.datasets_folder, train=True, download=False,
     transform=transform)
-
 train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000],
     generator=torch.Generator(device=torch.get_default_device()))
 train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, num_steps, ns.dummy_run)
@@ -56,11 +57,11 @@ validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_da
 q = nn.Sequential(nn_thread.NNThread(classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states), 2),
             nn.Flatten(),
             layer_categorical.IndependentCategorical(event_shape=[num_steps], num_classes=ns.num_states))
-conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
-    pixelcnn_dist.make_bernoulli_base_distribution(),
-    pixelcnn_layer.make_simple_pixelcnn_net(), [1, 28, 28], ns.num_states)
-layer_pixelcnn_bernoulli = nn.Sequential(pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,
-                                                                           [28, 28]), conditional_sp_distribution)
+channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+net = simple_pixelcnn_net.SimplePixelCNNNet(1, channel_layer.params_size(), ns.num_states)
+layer_pixelcnn_bernoulli = nn.Sequential(
+    pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,[28, 28]),
+    pixelcnn_layer.PixelCNN(net, [1, 28, 28], channel_layer, ns.num_states))
 mnist_hmm = DiscreteVAE(pygen_hmm.HMM(num_steps, ns.num_states, layer_pixelcnn_bernoulli), q)
 
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]

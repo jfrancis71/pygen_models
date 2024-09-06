@@ -16,8 +16,8 @@ import pygen.layers.independent_categorical as independent_categorical
 import pygen_models.distributions.discrete_vae as discrete_vae
 import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
-import pygen_models.distributions.pixelcnn as pixelcnn_dist
-import pygen_models.layers.pixelcnn as pixelcnn_layer
+import pygen_models.layers.pixelcnn as pixelcnn
+from pygen_models.neural_nets import simple_pixelcnn_net
 
 
 class IndependentLatentModel(nn.Module):
@@ -31,13 +31,12 @@ class IndependentLatentModel(nn.Module):
             reinterpreted_batch_ndims=1)
         match decoder_type:
             case "simple_pixelcnn":
-                intermediate_channels = 8
-                net = pixelcnn_layer.make_simple_pixelcnn_net()
-                conditional_sp_distribution = pixelcnn_layer.make_pixelcnn_layer(
-                pixelcnn_dist.make_bernoulli_base_distribution(), net, [1, 28, 28], intermediate_channels)
+                num_pixelcnn_params = 8
+                channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+                net = simple_pixelcnn_net.SimplePixelCNNNet(1, channel_layer.params_size(), num_pixelcnn_params)
                 self.p_x_given_z = nn.Sequential(nn.Flatten(),
-                    pixelcnn_layer.SpatialExpand(ns.num_vars * ns.num_states, intermediate_channels, [28, 28]),
-                    conditional_sp_distribution)
+                    pixelcnn.SpatialExpand(ns.num_vars * ns.num_states, num_pixelcnn_params, [28, 28]),
+                    pixelcnn.PixelCNN(net, [1, 28, 28], channel_layer, num_pixelcnn_params))
             case "basic":
                 self.p_x_given_z = nn.Sequential(nn.Flatten(),
                     nn.Linear(ns.num_vars * ns.num_states, 256), nn.ReLU(),

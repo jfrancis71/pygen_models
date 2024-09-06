@@ -1,47 +1,44 @@
 import torch
 from torch import nn
-import pixelcnn_pp.model as pixelcnn_model
-import pygen.layers.independent_bernoulli as bernoulli_layer
-import pygen.layers.independent_quantized_distribution as ql
-from pygen_models.neural_nets import simple_pixelcnn_net
 
 
 def channel_last(x: torch.Tensor):
     batch_dims = len(x.shape)-3
     return x.permute(list(range(batch_dims)) + [batch_dims+1, batch_dims+2, batch_dims])
 
+
 class PixelCNN(nn.Module):
-    def __init__(self, pixelcnn_net, event_shape, layer, params):
+    def __init__(self, pixelcnn_net, event_shape, channel_layer, pixelcnn_params):
         super().__init__()
         if len(event_shape) != 3:
             raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
         self.event_shape = torch.Size(event_shape)
-        self.layer = layer
-        if params is None or len(params.shape) == 3:
+        self.channel_layer = channel_layer
+        if pixelcnn_params is None or len(pixelcnn_params.shape) == 3:
             self.batch_shape = torch.Size([])
         else:
-            self.batch_shape = torch.Size(params.shape[:-3])
-        self.params = params
-        self.output_channels = self.layer.params_size()
+            self.batch_shape = torch.Size(pixelcnn_params.shape[:-3])
+        self.pixelcnn_params = pixelcnn_params
+        self.output_channels = self.channel_layer.params_size()
         self.pixelcnn_net = pixelcnn_net
 
     def log_prob(self, value):
         sample_shape = value.shape[:-len(self.batch_shape+self.event_shape)]
         nn_values = value.flatten(0, len(sample_shape+self.batch_shape)-1)
         nn_params = None
-        if self.params is not None:
-            nn_params = self.params.flatten(0, len(sample_shape+self.batch_shape)-1)
+        if self.pixelcnn_params is not None:
+            nn_params = self.pixelcnn_params.flatten(0, len(sample_shape+self.batch_shape)-1)
             if len(nn_params.shape) == 3:
                 nn_params = nn_params.unsqueeze(0).repeat(sample_shape+torch.Size([1]*len(nn_params.shape)))
         logits = self.pixelcnn_net((nn_values*2.0)-1.0, conditional=nn_params)
         reshape_logits = logits.reshape(sample_shape + self.batch_shape + torch.Size([self.output_channels, self.event_shape[1], self.event_shape[2]]))
         layer_logits = channel_last(reshape_logits)
         permute_samples = channel_last(value)
-        return self.layer(layer_logits).log_prob(permute_samples).sum(axis=[-1, -2])
+        return self.channel_layer(layer_logits).log_prob(permute_samples).sum(axis=[-1, -2])
 
     def sample(self, sample_shape=None):
         with torch.no_grad():
-            params = self.params
+            params = self.pixelcnn_params
             if params is not None:
                 if len(params.shape) == 3:
                     if sample_shape is None:
@@ -66,47 +63,13 @@ class PixelCNN(nn.Module):
                 for x in range(self.event_shape[2]):
                     logits = self.pixelcnn_net((sample*2)-1, sample=True,
                         conditional=params)[:, :, y, x]
-                    pixel_sample = self.layer(logits).sample()
+                    pixel_sample = self.channel_layer(logits).sample()
                     sample[:, :, y, x] = pixel_sample
-        if sample_shape is None and (params is None or len(self.params.shape)==3):
+        if sample_shape is None and (params is None or len(self.pixelcnn_params.shape)==3):
             return sample[0]
         if sample_shape is not None and params is not None:
-            return torch.reshape(sample, torch.Size(sample_shape)+torch.Size([self.params.shape[0]])+self.event_shape)
+            return torch.reshape(sample, torch.Size(sample_shape)+torch.Size([self.pixelcnn_params.shape[0]])+self.event_shape)
         return sample
-
-
-def make_bernoulli_base_distribution():
-    return lambda event_shape: bernoulli_layer.IndependentBernoulli(event_shape=event_shape)
-
-
-def make_quantized_base_distribution(add_noise=False):
-    return lambda event_shape: ql.IndependentQuantizedDistribution(event_shape=event_shape, add_noise=add_noise)
-
-
-def make_pixelcnn_net(num_resnet=3):
-    def _fn(input_channels, output_channels):
-        return pixelcnn_model.PixelCNN(nr_resnet=num_resnet, nr_filters=160,
-            input_channels=input_channels, nr_params=output_channels, nr_conditional=None)
-    return _fn
-
-
-def make_simple_pixelcnn_net():
-    def _fn(input_channels, output_channels):
-        return simple_pixelcnn_net.SimplePixelCNNNet(input_channels=input_channels, output_channels=output_channels,
-            num_conditional=None)
-    return _fn
-
-
-def make_pixelcnn(base_distribution, pixelcnn_net, event_shape):
-    """makes a PixelCNN distribution
-
-    >>> dist = make_pixelcnn(make_bernoulli_base_distribution(), make_simple_pixelcnn_net(), event_shape=[2, 12, 12])
-    >>> dist.sample().shape
-    torch.Size([2, 12, 12])
-    """
-    base_layer = base_distribution(event_shape[:1])
-    return PixelCNN(pixelcnn_net(input_channels=event_shape[0], output_channels=base_layer.params_size()), event_shape,
-        base_layer, None)
 
 
 import doctest

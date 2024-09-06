@@ -6,13 +6,17 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
-import pygen.distributions.quantized_distribution as q_distribution
+import pygen.distributions.quantized_distribution as qd
+import pygen.layers.independent_quantized_distribution as ql
+import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen_models.distributions.pixelcnn as pixelcnn
 import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
+from pygen_models.neural_nets import simple_pixelcnn_net
+import pixelcnn_pp.model as pixelcnn_net_pp
 
 
-parser = argparse.ArgumentParser(description='PyGen CIFAR10 PixelCNN')
+parser = argparse.ArgumentParser(description='PyGen PixelCNN')
 parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--dataset", default="mnist")
 parser.add_argument("--tb_folder", default=None)
@@ -25,10 +29,6 @@ parser.add_argument("--max_epoch", default=10, type=int)
 ns = parser.parse_args()
 
 torch.set_default_device(ns.device)
-match ns.net:
-    case "simple_pixelcnn_net": net = pixelcnn.make_simple_pixelcnn_net()
-    case "pixelcnn_net":  net = pixelcnn.make_pixelcnn_net(ns.num_resnet)
-    case _: raise RuntimeError("{ns.net} net name not recognized.")
 match ns.dataset:
     case "mnist":
         transform = transforms.Compose([transforms.ToTensor(),
@@ -36,21 +36,27 @@ match ns.dataset:
         dataset = datasets.MNIST(ns.datasets_folder, train=True, download=False, transform=transform)
         data_split = [55000, 5000]
         event_shape = [1, 28, 28]
-        image_distribution = pixelcnn.make_pixelcnn(
-            pixelcnn.make_bernoulli_base_distribution(), net, event_shape=[1, 28, 28])
+        channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1])
     case "cifar10":
         num_buckets = 8
         transform = transforms.Compose([transforms.ToTensor(),
             transforms.Lambda(
-                lambda value: q_distribution.discretize(value, num_buckets)),
+                lambda value: qd.discretize(value, num_buckets)),
                 train.DevicePlacement()])
         dataset = datasets.CIFAR10(ns.datasets_folder, train=True, download=False, transform=transform)
         data_split = [45000, 5000]
         event_shape = [3, 32, 32]
-        image_distribution = pixelcnn.make_pixelcnn(
-            pixelcnn.make_quantized_base_distribution(), net, event_shape=[3, 32, 32])
+        channel_layer = ql.IndependentQuantizedDistribution(event_shape=event_shape[:1], add_noise=False)
     case _:
         raise RuntimeError("dataset {ns.dataset} not recognized.")
+
+match ns.net:
+    case "simple_pixelcnn_net": net = simple_pixelcnn_net.SimplePixelCNNNet(event_shape[0], channel_layer.params_size(), None)
+    case "pixelcnn_net":  net = pixelcnn_net_pp.PixelCNN(nr_resnet=ns.num_resnet, nr_filters=160,
+            input_channels=event_shape[0], nr_params=channel_layer.params_size(), nr_conditional=None)
+    case _: raise RuntimeError("{ns.net} net name not recognized.")
+image_distribution = pixelcnn.PixelCNN(net, event_shape, channel_layer, None)
+
 train_dataset, validation_dataset = random_split(dataset, data_split,
     generator=torch.Generator(device=torch.get_default_device()))
 tb_writer = SummaryWriter(ns.tb_folder)

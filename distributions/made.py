@@ -10,7 +10,7 @@ class MadeBernoulli(nn.Module):
         self.num_vars = num_vars
         if hidden_layers is None:
             hidden_layers = [num_vars*2, num_vars*2]
-        self.arn = pyro.nn.AutoRegressiveNN(self.num_vars, hidden_layers, param_dims=[1], permutation=torch.arange(784))
+        self.arn = pyro.nn.AutoRegressiveNN(self.num_vars, hidden_layers, param_dims=[1], permutation=torch.arange(self.num_vars))
 
     def log_prob(self, value):
         net_output = self.arn(value.float())
@@ -26,3 +26,18 @@ class MadeBernoulli(nn.Module):
             sample_value = Bernoulli(logits=perm_net_output).sample()
             sample[..., i] = sample_value[..., i]
         return sample.long()
+
+
+class MadeCategorical(nn.Module):
+    """Simple MADE categorical implementation. Note this will only work for
+    a two state categorical distribution.
+    """
+    def __init__(self, num_vars, hidden_layers=None):
+        super().__init__()
+        self.made_bernoulli = MadeBernoulli(num_vars, hidden_layers)
+
+    def log_prob(self, value):
+        return self.made_bernoulli.log_prob(value)
+
+    def sample(self, sample_shape):
+        return self.made_bernoulli.sample(sample_shape)

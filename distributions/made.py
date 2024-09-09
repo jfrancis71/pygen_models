@@ -1,43 +1,37 @@
 import torch
 import torch.nn as nn
+from torch.ao.ns.fx.utils import maybe_dequantize_first_two_tensor_args_and_handle_tuples
 from torch.distributions.bernoulli import Bernoulli as Bernoulli
-import pyro.nn
 
 
 class MadeBernoulli(nn.Module):
-    def __init__(self, num_vars, hidden_layers=None):
+    def __init__(self, net, num_vars, made_params=None):
         super().__init__()
         self.num_vars = num_vars
-        if hidden_layers is None:
-            hidden_layers = [num_vars*2, num_vars*2]
-        self.arn = pyro.nn.AutoRegressiveNN(self.num_vars, hidden_layers, param_dims=[1], permutation=torch.arange(self.num_vars))
+        self.net = net
+        self.made_params = made_params
 
     def log_prob(self, value):
-        net_output = self.arn(value.float())
-        perm_net_output = net_output[:, self.arn.permutation]
+        if self.made_params is None:
+            net_output = self.net(value.float())
+        else:
+            net_output = self.net(value.float(), self.made_params)
+        perm_net_output = net_output[:, self.net.permutation]
         log_prob = Bernoulli(logits=perm_net_output).log_prob(value.float()).sum(axis=1)
         return log_prob
 
     def sample(self, sample_shape):
-        sample = torch.zeros(sample_shape + [self.num_vars])
+        if self.made_params is None:
+            batch_shape = []
+        else:
+            batch_shape = [self.made_params.shape[0]]
+        sample = torch.zeros(sample_shape + batch_shape + [self.num_vars])
         for i in range(self.num_vars):
-            net_output = self.arn(sample)
-            perm_net_output = net_output[..., self.arn.permutation]
+            if self.made_params is None:
+                net_output = self.net(sample)
+            else:
+                net_output = self.net(sample, self.made_params)
+            perm_net_output = net_output[..., self.net.permutation]
             sample_value = Bernoulli(logits=perm_net_output).sample()
             sample[..., i] = sample_value[..., i]
         return sample.long()
-
-
-class MadeCategorical(nn.Module):
-    """Simple MADE categorical implementation. Note this will only work for
-    a two state categorical distribution.
-    """
-    def __init__(self, num_vars, hidden_layers=None):
-        super().__init__()
-        self.made_bernoulli = MadeBernoulli(num_vars, hidden_layers)
-
-    def log_prob(self, value):
-        return self.made_bernoulli.log_prob(value)
-
-    def sample(self, sample_shape):
-        return self.made_bernoulli.sample(sample_shape)

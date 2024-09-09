@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from torch.ao.ns.fx.utils import maybe_dequantize_first_two_tensor_args_and_handle_tuples
 from torch.distributions.bernoulli import Bernoulli as Bernoulli
 
 

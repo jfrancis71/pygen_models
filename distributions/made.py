@@ -23,7 +23,7 @@ class MadeBernoulli(nn.Module):
         if self.made_params is None:
             batch_shape = []
         else:
-            batch_shape = [self.made_params.shape[0]]
+            batch_shape = list(self.made_params.shape[:-1])
         sample = torch.zeros(sample_shape + batch_shape + [self.num_vars])
         for i in range(self.num_vars):
             if self.made_params is None:

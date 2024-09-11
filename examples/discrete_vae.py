@@ -25,10 +25,7 @@ class IndependentLatentModel(nn.Module):
         super().__init__()
         self.num_vars = num_vars
         self.num_states = num_states
-        p_z_logits = torch.zeros([self.num_vars, self.num_states], requires_grad=False)
-        base_dist = torch.distributions.categorical.Categorical(logits=p_z_logits)
-        self.p_z_dist = torch.distributions.independent.Independent(base_distribution=base_dist,
-            reinterpreted_batch_ndims=1)
+        self.p_z_logits = torch.zeros([self.num_vars, self.num_states], requires_grad=True)
         match decoder_type:
             case "simple_pixelcnn":
                 num_pixelcnn_params = 8
@@ -47,7 +44,9 @@ class IndependentLatentModel(nn.Module):
                 raise RuntimeError(f"decoder_type {ns.decoder_type} not recognised.")
 
     def p_z(self):
-        return self.p_z_dist
+        base_dist = torch.distributions.categorical.Categorical(logits=self.p_z_logits)
+        p_z_dist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+        return p_z_dist
 
 def tb_vae_reconstruct(vae, images):
     def _fn():

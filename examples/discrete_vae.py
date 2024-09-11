@@ -25,7 +25,7 @@ class IndependentLatentModel(nn.Module):
         super().__init__()
         self.num_vars = num_vars
         self.num_states = num_states
-        self.p_z_logits = torch.zeros([self.num_vars, self.num_states], requires_grad=True)
+        self.p_z_logits = nn.Parameter(torch.zeros([self.num_vars, self.num_states], requires_grad=True))
         match decoder_type:
             case "simple_pixelcnn":
                 num_pixelcnn_params = 8

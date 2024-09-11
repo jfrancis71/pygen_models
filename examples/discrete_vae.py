@@ -87,7 +87,7 @@ encoder = nn.Sequential(
     classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states*ns.num_vars),
     independent_categorical.IndependentCategorical([ns.num_vars], ns.num_states))
 latent_model = IndependentLatentModel(ns.num_vars, ns.num_states, ns.decoder_type)
-digit_distribution = discrete_vae.DiscreteVAE(latent_model, encoder)
+digit_distribution = discrete_vae.DiscreteVAE(latent_model, encoder, ns.beta)
 
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)

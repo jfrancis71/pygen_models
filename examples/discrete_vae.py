@@ -18,6 +18,20 @@ import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
 import pygen_models.layers.pixelcnn as pixelcnn
 from pygen_models.neural_nets import simple_pixelcnn_net
+from pygen_models.distributions.r_independent_one_hot_categorical import RIndependentOneHotCategorical
+
+
+
+class RIndependentOneHotCategoricalLayer(nn.Module):
+    def __init__(self, event_shape, num_classes):
+        super().__init__()
+        self.event_shape = event_shape
+        self.num_classes = num_classes
+
+    def forward(self, logits):
+        batch_shape = list(logits.shape[:-1])
+        reshape_logits = logits.reshape(batch_shape + self.event_shape + [self.num_classes])
+        return RIndependentOneHotCategorical(event_shape=self.event_shape, logits=reshape_logits)
 
 
 class IndependentLatentModel(nn.Module):
@@ -44,15 +58,15 @@ class IndependentLatentModel(nn.Module):
                 raise RuntimeError(f"decoder_type {ns.decoder_type} not recognised.")
 
     def p_z(self):
-        base_dist = torch.distributions.categorical.Categorical(logits=self.p_z_logits)
+        base_dist = torch.distributions.one_hot_categorical.OneHotCategorical(logits=self.p_z_logits)
         p_z_dist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
         return p_z_dist
 
 def tb_vae_reconstruct(vae, images):
     def _fn():
         z = vae.q_z_given_x(images).sample()
-        one_hot_z = nn.functional.one_hot(z, vae.latent_model.num_states).float()
-        flatten_z = one_hot_z.flatten(-2)
+#        one_hot_z = nn.functional.one_hot(z, vae.latent_model.num_states).float()
+        flatten_z = z.flatten(-2)
         reconstruct_images = vae.latent_model.p_x_given_z(flatten_z).sample()
         imglist = torch.cat([images, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
@@ -84,7 +98,7 @@ torch.set_default_device(ns.device)
 
 encoder = nn.Sequential(
     classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states*ns.num_vars),
-    independent_categorical.IndependentCategorical([ns.num_vars], ns.num_states))
+    RIndependentOneHotCategoricalLayer([ns.num_vars], ns.num_states))
 latent_model = IndependentLatentModel(ns.num_vars, ns.num_states, ns.decoder_type)
 digit_distribution = discrete_vae.DiscreteVAE(latent_model, encoder, ns.beta)
 

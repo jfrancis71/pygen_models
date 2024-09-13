@@ -31,18 +31,12 @@ class DiscreteVAE(nn.Module):
         beta = self.beta
         return log_prob_x_given_z - beta*kl_div + beta*kl_div.detach() - kl_div.detach(), log_prob_x_given_z.detach(), kl_div.detach(), q_z_given_x_dist
 
-    def kl_div(self, p, q):
-        kl_div = torch.sum(p.base_dist.probs * (p.base_dist.logits - q.base_dist.logits), axis=-1)
-        return kl_div.sum(axis=-1)
-
     def sample(self, sample_shape=[]):
         z = self.latent_model.p_z().sample(sample_shape)
-        one_hot_z = nn.functional.one_hot(z, num_classes=self.latent_model.num_states).float()
-        decode = self.latent_model.p_x_given_z(one_hot_z)
+        decode = self.latent_model.p_x_given_z(z)
         return decode.sample()
 
     def reconstruct_log_prob(self, q_z_given_x_dist, x):
-        z_logits = q_z_given_x_dist.base_dist.logits
-        one_hot_z = nn.functional.gumbel_softmax(z_logits, hard=True)
-        reconstruct_log_probs = self.latent_model.p_x_given_z(one_hot_z).log_prob(x)
+        z = q_z_given_x_dist.rsample()
+        reconstruct_log_probs = self.latent_model.p_x_given_z(z).log_prob(x)
         return reconstruct_log_probs

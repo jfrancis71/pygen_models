@@ -1,14 +1,14 @@
 import torch
-from torch.distributions.categorical import Categorical as Categorical
 from pygen_models.distributions.markov_chain import MarkovChain as MarkovChain
+from pygen_models.distributions.r_independent_one_hot_categorical import RIndependentOneHotCategorical
 
 
 def kl_div(p, q):
-    if isinstance(p, torch.distributions.independent.Independent) and \
+    if isinstance(p, RIndependentOneHotCategorical) and \
         isinstance(q, torch.distributions.independent.Independent):
             kl_div = kl_div_independent_categorical(p, q)
     else:
-        if isinstance(p, torch.distributions.independent.Independent) and \
+        if isinstance(p, RIndependentOneHotCategorical) and \
             isinstance(q, MarkovChain):
                 kl_div = kl_div_independent_categorical_markov_chain(p, q)
         else:
@@ -16,7 +16,7 @@ def kl_div(p, q):
     return kl_div
 
 def kl_div_independent_categorical(p, q):
-    kl_div = torch.sum(p.base_dist.probs * (p.base_dist.logits - q.base_dist.logits), axis=-1)
+    kl_div = torch.sum(p.dist.base_dist.probs * (p.dist.base_dist.logits - q.base_dist.logits), axis=-1)
     return kl_div.sum(axis=-1)
 
 def kl_div_independent_categorical_markov_chain(p, q):

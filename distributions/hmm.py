@@ -28,8 +28,7 @@ class HMM(nn.Module):
 
     def sample_variables(self):
         state_sequence = self.markov_chain.sample()
-        one_hot_state_sequence = nn.functional.one_hot(state_sequence, self.num_states).float()
-        observation_seq = self.observation_model(one_hot_state_sequence).sample()
+        observation_seq = self.observation_model(state_sequence).sample()
         return state_sequence, observation_seq
 
     def forward(self, z):
@@ -38,7 +37,7 @@ class HMM(nn.Module):
     def p_z(self):
         return self.markov_chain
 
-    def p_x_given_z(self, one_hot_z):
-        observation_dist = self.observation_model(one_hot_z)
+    def p_x_given_z(self, z):
+        observation_dist = self.observation_model(z)
         observations_dist = torch.distributions.independent.Independent(observation_dist, reinterpreted_batch_ndims=1)
         return observations_dist

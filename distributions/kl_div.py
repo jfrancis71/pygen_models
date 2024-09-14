@@ -23,7 +23,8 @@ def kl_div_independent_categorical_markov_chain(p, q):
     # This generates a gradient for the parameter of the expectation, but does not generate a gradient for the
     # expectation sample itself (due to the sampling step). Does this matter?
     sample_z = p.sample()
-    kl_div = p.log_prob(sample_z).exp() * (p.log_prob(sample_z) - q.log_prob(sample_z))
+    sample_z_cat = torch.argmax(sample_z, dim=-1)
+    kl_div = p.log_prob(sample_z).exp() * (p.log_prob(sample_z) - q.log_prob(sample_z_cat))
     return kl_div
 
 def kl_div_categorical(p, q):

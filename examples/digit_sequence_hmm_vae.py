@@ -10,6 +10,7 @@ import pygen.train.callbacks as callbacks
 from pygen.neural_nets import classifier_net
 import pygen.layers.independent_categorical as layer_categorical
 import pygen.layers.independent_bernoulli as bernoulli_layer
+import pygen.layers.one_hot as one_hot
 import pygen_models.layers.pixelcnn as pixelcnn_layer
 import pygen_models.distributions.hmm as pygen_hmm
 from pygen_models.datasets import sequential_mnist
@@ -18,13 +19,14 @@ import pygen_models.train.callbacks as pygen_models_callbacks
 import pygen_models.utils.nn_thread as nn_thread
 from pygen_models.distributions.discrete_vae import DiscreteVAE
 from pygen_models.neural_nets import simple_pixelcnn_net
+import pygen_models.layers.r_independent_one_hot_categorical as r_ind
 
 
 def vae_reconstruct(vae, image_seq):
     def _fn():
         z = vae.q_z_given_x(image_seq.unsqueeze(0)).sample()
-        one_hot_z = nn.functional.one_hot(z, vae.latent_model.num_states).float()
-        flatten_z = one_hot_z.flatten(-1)
+#        one_hot_z = nn.functional.one_hot(z, vae.latent_model.num_states).float()
+        flatten_z = z.flatten(-1)
         reconstruct_images = vae.latent_model.p_x_given_z(flatten_z[0]).sample()
         imglist = torch.cat([image_seq, reconstruct_images], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=5)
@@ -56,13 +58,14 @@ validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_da
 
 q = nn.Sequential(nn_thread.NNThread(classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states), 2),
             nn.Flatten(),
-            layer_categorical.IndependentCategorical(event_shape=[num_steps], num_classes=ns.num_states))
+            r_ind.RIndependentOneHotCategoricalLayer(event_shape=[num_steps], num_classes=ns.num_states))
 channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
 net = simple_pixelcnn_net.SimplePixelCNNNet(1, channel_layer.params_size(), ns.num_states)
 layer_pixelcnn_bernoulli = nn.Sequential(
     pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,[28, 28]),
     pixelcnn_layer.PixelCNN(net, [1, 28, 28], channel_layer, ns.num_states))
-mnist_hmm = DiscreteVAE(pygen_hmm.HMM(num_steps, ns.num_states, layer_pixelcnn_bernoulli), q)
+latent_model = pygen_hmm.HMM(num_steps, ns.num_states, layer_pixelcnn_bernoulli)
+mnist_hmm = DiscreteVAE(latent_model, q, one_hot_sample=True)
 
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)

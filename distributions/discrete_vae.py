@@ -15,11 +15,12 @@ class DiscreteVAE(nn.Module):
     Notes:
         p_x_given_z takes a one hot input as the output distribution must be differentiable wrt the one hot input.
     """
-    def __init__(self, latent_model, q_z_given_x, beta=1.0):
+    def __init__(self, latent_model, q_z_given_x, beta=1.0, one_hot_sample=False):
         super().__init__()
         self.latent_model = latent_model
         self.q_z_given_x = q_z_given_x
         self.beta = beta
+        self.one_hot_sample = one_hot_sample
 
     def log_prob(self, x):
         return self.elbo(x)[0]
@@ -33,6 +34,8 @@ class DiscreteVAE(nn.Module):
 
     def sample(self, sample_shape=[]):
         z = self.latent_model.p_z().sample(sample_shape)
+        if self.one_hot_sample:
+            z = nn.functional.one_hot(z, num_classes=self.latent_model.markov_chain.num_states).float()
         decode = self.latent_model.p_x_given_z(z)
         return decode.sample()
 

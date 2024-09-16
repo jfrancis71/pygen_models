@@ -19,6 +19,8 @@ import pygen_models.train.callbacks as pygen_models_callbacks
 import pygen_models.layers.pixelcnn as pixelcnn
 from pygen_models.neural_nets import simple_pixelcnn_net
 from pygen_models.distributions.r_independent_one_hot_categorical import RIndependentOneHotCategorical
+from pygen_models.distributions.made import MadeBernoulli
+import pyro.nn
 
 
 
@@ -40,6 +42,7 @@ class IndependentLatentModel(nn.Module):
         self.num_vars = num_vars
         self.num_states = num_states
         self.p_z_logits = nn.Parameter(torch.zeros([self.num_vars, self.num_states], requires_grad=True))
+        self.net = pyro.nn.AutoRegressiveNN(num_vars, [num_vars*2, num_vars*2], param_dims=[1], permutation=torch.arange(num_vars))
         match decoder_type:
             case "simple_pixelcnn":
                 num_pixelcnn_params = 8
@@ -58,8 +61,9 @@ class IndependentLatentModel(nn.Module):
                 raise RuntimeError(f"decoder_type {ns.decoder_type} not recognised.")
 
     def p_z(self):
-        base_dist = torch.distributions.one_hot_categorical.OneHotCategorical(logits=self.p_z_logits)
-        p_z_dist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+#        base_dist = torch.distributions.one_hot_categorical.OneHotCategorical(logits=self.p_z_logits)
+#        p_z_dist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+        p_z_dist = MadeBernoulli(self.net, self.num_vars)
         return p_z_dist
 
 def tb_vae_reconstruct(vae, images):
@@ -100,7 +104,7 @@ encoder = nn.Sequential(
     classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states*ns.num_vars),
     RIndependentOneHotCategoricalLayer([ns.num_vars], ns.num_states))
 latent_model = IndependentLatentModel(ns.num_vars, ns.num_states, ns.decoder_type)
-digit_distribution = discrete_vae.DiscreteVAE(latent_model, encoder, ns.beta)
+digit_distribution = discrete_vae.DiscreteVAE(latent_model, encoder, ns.beta, one_hot_sample=True)
 
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)

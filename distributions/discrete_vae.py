@@ -35,7 +35,7 @@ class DiscreteVAE(nn.Module):
     def sample(self, sample_shape=[]):
         z = self.latent_model.p_z().sample(sample_shape)
         if self.one_hot_sample:
-            z = nn.functional.one_hot(z, num_classes=self.latent_model.markov_chain.num_states).float()
+            z = nn.functional.one_hot(z, num_classes=2).float()
         decode = self.latent_model.p_x_given_z(z)
         return decode.sample()
 

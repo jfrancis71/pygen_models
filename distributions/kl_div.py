@@ -2,6 +2,7 @@ import torch
 from pygen_models.distributions.markov_chain import MarkovChain as MarkovChain
 from pygen_models.distributions.r_independent_one_hot_categorical import RIndependentOneHotCategorical
 import pygen_models.distributions.made as made
+from pygen_models.distributions.multivariate_markov_chain import BernoulliMarkovChain as BernoulliMarkovChain
 
 def kl_div(p, q):
     if isinstance(p, RIndependentOneHotCategorical) and \
@@ -12,7 +13,11 @@ def kl_div(p, q):
             isinstance(q, made.MadeBernoulli):
                 kl_div = kl_div_independent_categorical_made(p, q)
         else:
-            raise RuntimeError("KL_DIV Error, unknown distributions")
+            if isinstance(p, RIndependentOneHotCategorical) and \
+                    isinstance(q, BernoulliMarkovChain):
+                kl_div = kl_div_independent_BernoulliMarkovChain(p, q)
+            else:
+                raise RuntimeError("KL_DIV Error, unknown distributions")
     return kl_div
 
 def kl_div_independent_categorical(p, q):
@@ -25,6 +30,12 @@ def kl_div_independent_categorical_made(p, q):
     sample_z = p.sample()
 #    sample_z_cat = torch.argmax(sample_z, dim=-1)
     kl_div = p.log_prob(sample_z) - q.log_prob(sample_z[...,1])
+    return kl_div
+
+def kl_div_independent_BernoulliMarkovChain(p, q):
+    sample_z = p.sample().detach()
+    #    sample_z_cat = torch.argmax(sample_z, dim=-1)
+    kl_div = p.log_prob(sample_z).detach().sum(axis=-1) - q.log_prob(sample_z[...,1])
     return kl_div
 
 def kl_div_categorical(p, q):

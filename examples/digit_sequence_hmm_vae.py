@@ -1,4 +1,5 @@
 import argparse
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import random_split
@@ -6,55 +7,119 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision
 from torchvision.utils import make_grid
 import pygen.train.train as train
-import pygen.train.callbacks as callbacks
 from pygen.neural_nets import classifier_net
-import pygen.layers.independent_categorical as layer_categorical
+import pygen.train.callbacks as callbacks
 import pygen.layers.independent_bernoulli as bernoulli_layer
-import pygen.layers.one_hot as one_hot
-import pygen_models.layers.pixelcnn as pixelcnn_layer
-import pygen_models.distributions.hmm as pygen_hmm
 from pygen_models.datasets import sequential_mnist
-import pygen_models.train.train as pygen_models_train
-import pygen_models.train.callbacks as pygen_models_callbacks
-import pygen_models.utils.nn_thread as nn_thread
-from pygen_models.distributions.discrete_vae import DiscreteVAE
-from pygen_models.neural_nets import simple_pixelcnn_net
-import pygen_models.layers.r_independent_one_hot_categorical as r_ind
-import pygen_models.distributions.multivariate_markov_chain as mv
-import pygen_models.layers.r_bernoulli as rb
+import pixelcnn_pp.model as pixelcnn_model
+import pygen_models.layers.pixelcnn as pixelcnn
+import pyro.nn
+import pygen_models.distributions.made as made
+import pygen_models.layers.made as lmade
 
 
-class LatentModel(nn.Module):
-    def __init__(self, num_steps, num_vars):
+class Model(nn.Module):
+    def __init__(self):
         super().__init__()
-#        self.observation_model = observation_model
-        self.mv = mv.BernoulliMarkovChain(num_steps, num_vars)
-        self.p_x_given_z_ind = nn.Sequential(
-                                        nn.Flatten(-2),
-                                         nn.Linear(256, 256), nn.ReLU(),
-                                         nn.Linear(256, 512), nn.ReLU(),
-                                         nn.Linear(512, 784),
-                                         bernoulli_layer.IndependentBernoulli([1, 28, 28]))
-
-    def p_x_given_z(self, z):
-        base_dist = self.p_x_given_z_ind(z.float())
-        dist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
-        return dist
-
-    def p_z(self):
-        return self.mv
+        num_z = 128
+        net = pixelcnn_model.PixelCNN(nr_resnet=1, nr_filters = 160, input_channels = 1,
+            nr_params = 1, nr_conditional = 160)
+        channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+        self.pixelcnn_layer = nn.Sequential(
+            pixelcnn.SpatialExpand(num_z, 160, [28, 28]),
+            pixelcnn.PixelCNN(net, [1, 28, 28], channel_layer, 160))
+        self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=num_z)
+        self.z_logits = nn.Parameter(torch.zeros([num_z]))
+        net = pyro.nn.AutoRegressiveNN(num_z, [num_z * 2, num_z * 2], param_dims=[1],
+                                       permutation=torch.arange(num_z))
+        self.made = made.MadeBernoulli(net, num_z, None)
+        lnet = pyro.nn.ConditionalAutoRegressiveNN(num_z, num_z, [num_z*2, num_z*2], param_dims=[1], permutation=torch.arange(num_z))
+        self.lmade = lmade.Made(lnet, num_z)
 
 
-def vae_reconstruct(vae, image_seq):
+    def train(self, x):
+        z_logits = self.encoder(x[:, 0])
+        one_hot_logits = torch.stack([z_logits*0.0, z_logits], dim=-1)
+        one_hot = nn.functional.gumbel_softmax(one_hot_logits, hard=True)
+        z = one_hot[..., 1]
+        log_prob = self.pixelcnn_layer(z).log_prob(x[:, 1])
+        z_tr = self.pz().log_prob(z.detach())
+        made_log = self.made.log_prob(z.detach())
+        base_dist = torch.distributions.bernoulli.Bernoulli(logits=self.encoder(x[:, 1]))
+        ldist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+        z1 = ldist.sample()
+        lmade_log = self.lmade(z.detach()).log_prob(z1)
+        return (log_prob + z_tr - z_tr.detach() + made_log - made_log.detach() + lmade_log - lmade_log.detach(),
+                z_tr.detach(), made_log.detach(), lmade_log.detach())
+
+    def pz(self):
+        base_dist = torch.distributions.bernoulli.Bernoulli(logits=self.z_logits)
+        return torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+
+
+def reconstruct_cb(model, image_seq):
     def _fn():
-        z = vae.q_z_given_x(image_seq.unsqueeze(0)).sample()
-#        one_hot_z = nn.functional.one_hot(z, vae.latent_model.num_states).float()
-        flatten_z = z.flatten(-2)
-        reconstruct_images = vae.latent_model.p_x_given_z(z).sample()[0]
-        imglist = torch.cat([image_seq, reconstruct_images], dim=0)
-        grid_image = make_grid(imglist, padding=10, nrow=5)
+        z_logits = model.encoder(image_seq[:, 0])
+        one_hot_logits = torch.stack([z_logits*0.0, z_logits], dim=-1)
+        one_hot = nn.functional.gumbel_softmax(one_hot_logits, hard=True)
+        z = one_hot[..., 1]
+        dist = model.pixelcnn_layer(z)
+        sample = dist.sample()
+        imglist = torch.cat([image_seq[:, 0], sample], dim=0)
+        grid_image = make_grid(imglist, padding=10, nrow=10)
         return grid_image
     return _fn
+
+
+def gen_cb(model):
+    def _fn():
+        z = model.pz().sample(sample_shape=[10])
+        dist = model.pixelcnn_layer(z)
+        samples = dist.sample()
+        grid_image = make_grid(samples, padding=10, nrow=10)
+        return grid_image
+    return _fn
+
+
+def gen_made_cb(model):
+    def _fn():
+        z = model.made.sample(sample_shape=[10]).float()
+        dist = model.pixelcnn_layer(z)
+        samples = dist.sample()
+        z1 = model.lmade(z).sample(sample_shape=[]).float()
+        dist1 = model.pixelcnn_layer(z1)
+        samples1 = dist1.sample()
+
+        z2 = model.lmade(z1).sample(sample_shape=[]).float()
+        dist2 = model.pixelcnn_layer(z2)
+        samples2 = dist2.sample()
+
+        z3 = model.lmade(z2).sample(sample_shape=[]).float()
+        dist3 = model.pixelcnn_layer(z3)
+        samples3 = dist3.sample()
+
+        z4 = model.lmade(z3).sample(sample_shape=[]).float()
+        dist4 = model.pixelcnn_layer(z4)
+        samples4 = dist4.sample()
+
+        pic = torch.cat([samples, samples1, samples2, samples3, samples4])
+        grid_image = make_grid(pic, padding=10, nrow=10)
+        return grid_image
+    return _fn
+
+
+
+def train_objective(distribution, batch):
+    log_prob, z, made, lmade = distribution.train(batch[0])
+    log_prob_mean = log_prob.mean()
+    z_mean = z.mean()
+    made_mean = made.mean()
+    lmade_mean = lmade.mean()
+    metrics_data = (log_prob_mean.cpu().detach().numpy(), z_mean.cpu().detach().numpy(),
+                    made_mean.cpu().detach().numpy(), lmade_mean.cpu().detach().numpy())
+    metrics_dtype = [('log_prob', 'float32'), ('z', 'float32'), ('made', 'float32'), ('lmade', 'float32')]
+    metrics = np.array(metrics_data, metrics_dtype)
+    return log_prob_mean, metrics
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Sequence HMM')
@@ -62,12 +127,9 @@ parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
-parser.add_argument("--num_states", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
-num_steps = 5
-num_vars = 128
 torch.set_default_device(ns.device)
 
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
@@ -77,30 +139,20 @@ mnist_dataset = torchvision.datasets.MNIST(
     transform=transform)
 train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000],
     generator=torch.Generator(device=torch.get_default_device()))
-train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, num_steps, ns.dummy_run)
-validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, num_steps, ns.dummy_run)
+train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, 2, ns.dummy_run)
+validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, 2, ns.dummy_run)
 
-
-q = nn.Sequential(nn_thread.NNThread(classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_states*2), 2),
-            r_ind.RIndependentOneHotCategoricalLayer([num_vars], 2))
-#channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-#net = simple_pixelcnn_net.SimplePixelCNNNet(1, channel_layer.params_size(), ns.num_states)
-#layer_pixelcnn_bernoulli = nn.Sequential(
-#    pixelcnn_layer.SpatialExpand(ns.num_states, ns.num_states,[28, 28]),
-#    pixelcnn_layer.PixelCNN(net, [1, 28, 28], channel_layer, ns.num_states))
-
-latent_model = LatentModel(num_steps, num_vars)
-mnist_hmm = DiscreteVAE(latent_model, q, beta=0.0,  one_hot_sample=True, )
-
-example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
+model = Model()
+example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.tb_log_image(tb_writer, "reconstructed_image_seq", vae_reconstruct(mnist_hmm, example_valid_images[0])),
+    callbacks.tb_log_image(tb_writer, "reconstructed_image_seq", reconstruct_cb(model, example_valid_images[0])),
+    callbacks.tb_log_image(tb_writer, "gen_seq", gen_cb(model)),
+    callbacks.tb_log_image(tb_writer, "gen_made_seq", gen_made_cb(model)),
     callbacks.tb_epoch_log_metrics(tb_writer),
-    pygen_models_callbacks.TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
-    #pygen_models_callbacks.TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
 ])
-train.train(mnist_hmm, train_dataset, pygen_models_train.vae_objective(),
-    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False)
+if __name__ == "__main__":
+    train.train(model, train_dataset, train_objective,
+        batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), model_path="./model.pth",
+        epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False)

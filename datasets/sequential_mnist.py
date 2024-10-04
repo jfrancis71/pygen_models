@@ -20,7 +20,7 @@ class SequentialMNISTDataset(Dataset):
         return self.mnist_dataset_len
 
     def __getitem__(self, idx):
-        d = torch.randint(low=0, high=9, size=[])
+        d = torch.randint(low=0, high=10, size=[])
         rand_idx_sel = torch.randint(low=0, high=self.digits[d].shape[0], size=[])
         i1 = [self.digits[d][rand_idx_sel]]
         for s in range(self.seq_len-1):

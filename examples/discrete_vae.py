@@ -30,6 +30,14 @@ class Floatify(nn.Module):
         return x.float()
 
 
+class RIndependentBernoulliLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return r_ind_bern.RIndependentBernoulliDistribution(logits=x)
+
+
 class IndependentLatentModel(nn.Module):
     def __init__(self, num_vars, decoder_type):
         super().__init__()

@@ -29,7 +29,6 @@ class Model(nn.Module):
             pixelcnn.SpatialExpand(num_z, 160, [28, 28]),
             pixelcnn.PixelCNN(net, [1, 28, 28], channel_layer, 160))
         self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=num_z)
-        self.z_logits = nn.Parameter(torch.zeros([num_z]))
         net = pyro.nn.AutoRegressiveNN(num_z, [num_z * 2, num_z * 2], param_dims=[1],
                                        permutation=torch.arange(num_z))
         self.made = made.MadeBernoulli(net, num_z, None)
@@ -43,18 +42,16 @@ class Model(nn.Module):
         one_hot = nn.functional.gumbel_softmax(one_hot_logits, hard=True)
         z = one_hot[..., 1]
         log_prob = self.pixelcnn_layer(z).log_prob(x[:, 1])
-        z_tr = self.pz().log_prob(z.detach())
-        made_log = self.made.log_prob(z.detach())
+        made_log = self.pz().log_prob(z.detach())
         base_dist = torch.distributions.bernoulli.Bernoulli(logits=self.encoder(x[:, 1]))
         ldist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
         z1 = ldist.sample()
         lmade_log = self.lmade(z.detach()).log_prob(z1)
-        return (log_prob + z_tr - z_tr.detach() + made_log - made_log.detach() + lmade_log - lmade_log.detach(),
-                z_tr.detach(), made_log.detach(), lmade_log.detach())
+        return (log_prob + made_log - made_log.detach() + lmade_log - lmade_log.detach(),
+            made_log.detach(), lmade_log.detach())
 
     def pz(self):
-        base_dist = torch.distributions.bernoulli.Bernoulli(logits=self.z_logits)
-        return torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+        return self.made
 
 
 def reconstruct_cb(model, image_seq):
@@ -67,16 +64,6 @@ def reconstruct_cb(model, image_seq):
         sample = dist.sample()
         imglist = torch.cat([image_seq[:, 0], sample], dim=0)
         grid_image = make_grid(imglist, padding=10, nrow=10)
-        return grid_image
-    return _fn
-
-
-def gen_cb(model):
-    def _fn():
-        z = model.pz().sample(sample_shape=[10])
-        dist = model.pixelcnn_layer(z)
-        samples = dist.sample()
-        grid_image = make_grid(samples, padding=10, nrow=10)
         return grid_image
     return _fn
 
@@ -108,16 +95,14 @@ def gen_made_cb(model):
     return _fn
 
 
-
 def train_objective(distribution, batch):
-    log_prob, z, made, lmade = distribution.train(batch[0])
+    log_prob, made, lmade = distribution.train(batch[0])
     log_prob_mean = log_prob.mean()
-    z_mean = z.mean()
     made_mean = made.mean()
     lmade_mean = lmade.mean()
-    metrics_data = (log_prob_mean.cpu().detach().numpy(), z_mean.cpu().detach().numpy(),
+    metrics_data = (log_prob_mean.cpu().detach().numpy(),
                     made_mean.cpu().detach().numpy(), lmade_mean.cpu().detach().numpy())
-    metrics_dtype = [('log_prob', 'float32'), ('z', 'float32'), ('made', 'float32'), ('lmade', 'float32')]
+    metrics_dtype = [('log_prob', 'float32'), ('made', 'float32'), ('lmade', 'float32')]
     metrics = np.array(metrics_data, metrics_dtype)
     return log_prob_mean, metrics
 
@@ -147,7 +132,6 @@ example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset,
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
     callbacks.tb_log_image(tb_writer, "reconstructed_image_seq", reconstruct_cb(model, example_valid_images[0])),
-    callbacks.tb_log_image(tb_writer, "gen_seq", gen_cb(model)),
     callbacks.tb_log_image(tb_writer, "gen_made_seq", gen_made_cb(model)),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)

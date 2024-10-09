@@ -34,21 +34,43 @@ class Model(nn.Module):
         self.made = made.MadeBernoulli(net, num_z, None)
         lnet = pyro.nn.ConditionalAutoRegressiveNN(num_z, num_z, [num_z*2, num_z*2], param_dims=[1], permutation=torch.arange(num_z))
         self.lmade = lmade.Made(lnet, num_z)
-
+        self.fwd = nn.Sequential(nn.ReLU(), nn.Linear(128, 128))
+        self.bwd = nn.Sequential(nn.ReLU(), nn.Linear(128, 128))
 
     def train(self, x):
-        z_logits = self.encoder(x[:, 0])
-        one_hot_logits = torch.stack([z_logits*0.0, z_logits], dim=-1)
-        one_hot = nn.functional.gumbel_softmax(one_hot_logits, hard=True)
-        z = one_hot[..., 1]
-        log_prob = self.pixelcnn_layer(z).log_prob(x[:, 1])
-        made_log = self.pz().log_prob(z.detach())
-        base_dist = torch.distributions.bernoulli.Bernoulli(logits=self.encoder(x[:, 1]))
-        ldist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
-        z1 = ldist.sample()
-        lmade_log = self.lmade(z.detach()).log_prob(z1)
+        z_logits1 = self.bwd(self.encoder(x[:, 1]))
+        one_hot_logits1 = torch.stack([z_logits1*0.0, z_logits1], dim=-1)
+        one_hot1 = nn.functional.gumbel_softmax(one_hot_logits1, hard=True)
+        z1 = one_hot1[..., 1]
+        log_prob1 = self.pixelcnn_layer(z1).log_prob(x[:, 0])
+
+        z_logits2 = self.fwd(self.encoder(x[:, 0]))
+        one_hot_logits2 = torch.stack([z_logits2*0.0, z_logits2], dim=-1)
+        one_hot2 = nn.functional.gumbel_softmax(one_hot_logits2, hard=True)
+        z2 = one_hot2[..., 1]
+        log_prob2 = self.pixelcnn_layer(z2).log_prob(x[:, 1])
+
+        z_logits3 = self.fwd(self.encoder(x[:, 1]))
+        one_hot_logits3 = torch.stack([z_logits3*0.0, z_logits3], dim=-1)
+        one_hot3 = nn.functional.gumbel_softmax(one_hot_logits3, hard=True)
+        z3 = one_hot3[..., 1]
+        log_prob3 = self.pixelcnn_layer(z3).log_prob(x[:, 2])
+
+        log_prob = log_prob1 + log_prob2 + log_prob3
+
+        made_log = self.pz().log_prob(z1.detach())
+        lmade_log1 = self.lmade(z1.detach()).log_prob(z2.detach())
+        lmade_log2 = self.lmade(z2.detach()).log_prob(z3.detach())
+        lmade_log = lmade_log1 + lmade_log2
+
+#        kl_div1 = torch.distributions.bernoulli.Bernoulli(logits=z_logits1).log_prob(z1).sum(axis=1)*0.0 - made_log
+#        kl_div2 = torch.distributions.bernoulli.Bernoulli(logits=z_logits2).log_prob(z2).sum(axis=1)*0.0 - lmade_log
+#        kl_div = kl_div1 + kl_div2
+
+#        return (log_prob - kl_div + kl_div.detach(),
+#            made_log.detach(), lmade_log.detach())
         return (log_prob + made_log - made_log.detach() + lmade_log - lmade_log.detach(),
-            made_log.detach(), lmade_log.detach())
+                made_log.detach(), lmade_log.detach())
 
     def pz(self):
         return self.made
@@ -56,7 +78,7 @@ class Model(nn.Module):
 
 def reconstruct_cb(model, image_seq):
     def _fn():
-        z_logits = model.encoder(image_seq[:, 0])
+        z_logits = model.fwd(model.encoder(image_seq[:, 0]))
         one_hot_logits = torch.stack([z_logits*0.0, z_logits], dim=-1)
         one_hot = nn.functional.gumbel_softmax(one_hot_logits, hard=True)
         z = one_hot[..., 1]
@@ -117,6 +139,8 @@ ns = parser.parse_args()
 
 torch.set_default_device(ns.device)
 
+seq_len = 3
+batch_size = 16
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
     train.DevicePlacement()])
 mnist_dataset = torchvision.datasets.MNIST(
@@ -124,8 +148,8 @@ mnist_dataset = torchvision.datasets.MNIST(
     transform=transform)
 train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000],
     generator=torch.Generator(device=torch.get_default_device()))
-train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, 2, ns.dummy_run)
-validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, 2, ns.dummy_run)
+train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, seq_len, ns.dummy_run)
+validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, seq_len, ns.dummy_run)
 
 model = Model()
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))
@@ -134,9 +158,9 @@ epoch_end_callbacks = callbacks.callback_compose([
     callbacks.tb_log_image(tb_writer, "reconstructed_image_seq", reconstruct_cb(model, example_valid_images[0])),
     callbacks.tb_log_image(tb_writer, "gen_made_seq", gen_made_cb(model)),
     callbacks.tb_epoch_log_metrics(tb_writer),
-    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset, batch_size=batch_size)
 ])
 if __name__ == "__main__":
     train.train(model, train_dataset, train_objective,
         batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), model_path="./model.pth",
-        epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False)
+        epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False, batch_size=batch_size)

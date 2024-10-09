@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import random_split
+import torch.distributions.kl as kl_div_mod
 import torchvision
 from torchvision.utils import make_grid
 from pygen.train import callbacks
@@ -63,6 +64,13 @@ class IndependentLatentModel(nn.Module):
     def p_z(self):
         p_z_dist = MadeBernoulli(self.net, self.num_vars)
         return p_z_dist
+
+
+@kl_div_mod.register_kl(r_ind_bern.RIndependentBernoulliDistribution, MadeBernoulli)
+def kl_div_r_independent_bernoulli_made_bernoulli(p, q):
+    sample_z = p.rsample()
+    kl_div = p.log_prob(sample_z) - q.log_prob(sample_z)
+    return kl_div
 
 
 def tb_vae_reconstruct(vae, images):

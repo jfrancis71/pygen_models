@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import pygen_models.distributions.kl_div as kl_div_mod
 
 
 class DiscreteVAE(nn.Module):
@@ -23,7 +22,7 @@ class DiscreteVAE(nn.Module):
     def elbo(self, x):
         q_z_given_x_dist = self.q_z_given_x(x)
         log_prob_x_given_z = self.reconstruct_log_prob(q_z_given_x_dist, x)
-        kl_div = kl_div_mod.kl_div(q_z_given_x_dist, self.latent_model.p_z())
+        kl_div = torch.distributions.kl.kl_divergence(q_z_given_x_dist, self.latent_model.p_z())
         beta = self.beta
         return log_prob_x_given_z - beta*kl_div + beta*kl_div.detach() - kl_div.detach(), log_prob_x_given_z.detach(), kl_div.detach()
 

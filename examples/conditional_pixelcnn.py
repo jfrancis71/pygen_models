@@ -10,8 +10,8 @@ import pygen.train.train as train
 import pygen.train.callbacks as callbacks
 import pygen.layers.one_hot as one_hot
 import pygen.layers.independent_bernoulli as bernoulli_layer
-import pygen.layers.independent_quantized_distribution as ql
-import pygen.distributions.quantized_distribution as qd
+import pygen_models.layers.independent_quantized_distribution as ql
+import pygen_models.distributions.quantized_distribution as qd
 import pixelcnn_pp.model as pixelcnn_model
 import pygen_models.layers.pixelcnn as pixelcnn
 from pygen_models.neural_nets import simple_pixelcnn_net

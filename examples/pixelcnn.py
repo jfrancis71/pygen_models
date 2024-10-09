@@ -6,8 +6,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import pygen.train.train as train
 import pygen.train.callbacks as callbacks
-import pygen.distributions.quantized_distribution as qd
-import pygen.layers.independent_quantized_distribution as ql
+import pygen_models.distributions.quantized_distribution as qd
+import pygen_models.layers.independent_quantized_distribution as ql
 import pygen.layers.independent_bernoulli as bernoulli_layer
 import pygen_models.distributions.pixelcnn as pixelcnn
 import pygen_models.train.train as pygen_models_train

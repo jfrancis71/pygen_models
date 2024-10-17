@@ -7,6 +7,18 @@ def channel_last(x: torch.Tensor):
     return x.permute(list(range(batch_dims)) + [batch_dims+1, batch_dims+2, batch_dims])
 
 
+def thread2(net, p1, p2, sample):
+    batch_ndims = len(p1.shape[:-3])
+    p1_flat = p1.flatten(0, batch_ndims-1)
+    if p2 is None:
+        p2_flat = None
+    else:
+        p2_flat = p2.flatten(0, batch_ndims-1)
+    out_flat = net(p1_flat, sample, conditional=p2_flat)
+    out = out_flat.unflatten(0, p1.shape[:-3])
+    return out
+
+
 class PixelCNN(nn.Module):
     def __init__(self, pixelcnn_net, event_shape, channel_layer, pixelcnn_params):
         super().__init__()
@@ -23,52 +35,20 @@ class PixelCNN(nn.Module):
         self.pixelcnn_net = pixelcnn_net
 
     def log_prob(self, value):
-        sample_shape = value.shape[:-len(self.batch_shape+self.event_shape)]
-        nn_values = value.flatten(0, len(sample_shape+self.batch_shape)-1)
-        nn_params = None
-        if self.pixelcnn_params is not None:
-            nn_params = self.pixelcnn_params.flatten(0, len(sample_shape+self.batch_shape)-1)
-            if len(nn_params.shape) == 3:
-                nn_params = nn_params.unsqueeze(0).repeat(sample_shape+torch.Size([1]*len(nn_params.shape)))
-        logits = self.pixelcnn_net((nn_values*2.0)-1.0, conditional=nn_params)
-        reshape_logits = logits.reshape(sample_shape + self.batch_shape + torch.Size([self.output_channels, self.event_shape[1], self.event_shape[2]]))
-        layer_logits = channel_last(reshape_logits)
+        logits = thread2(self.pixelcnn_net, (value*2)-1, self.pixelcnn_params, False)
+        layer_logits = channel_last(logits)
         permute_samples = channel_last(value)
         return self.channel_layer(layer_logits).log_prob(permute_samples).sum(axis=[-1, -2])
 
     def sample(self, sample_shape=None):
         with torch.no_grad():
-            params = self.pixelcnn_params
-            if params is not None:
-                if len(params.shape) == 3:
-                    if sample_shape is None:
-                        params = params.unsqueeze(0)
-                    else:
-                        params = params.unsqueeze(0).repeat(sample_shape[0], 1, 1, 1)
-                elif len(params.shape) == 4:
-                    if sample_shape is None or sample_shape == torch.Size([]):
-                        params = params
-                    else:
-                        params = params.repeat(sample_shape[0], 1, 1, 1)
-            # pylint: disable=E1101
-            if params is None:
-                if sample_shape is None:
-                    net_batch_shape = [1]
-                else:
-                    net_batch_shape = torch.Size(sample_shape)
-            else:
-                net_batch_shape = torch.Size([params.shape[0]])
-            sample = torch.zeros(net_batch_shape+self.event_shape)
+            sample = torch.zeros(torch.Size(sample_shape) + self.batch_shape + self.event_shape)
+            params = None if self.pixelcnn_params is None else self.pixelcnn_params.expand(torch.Size(sample_shape) + self.pixelcnn_params.shape)
             for y in range(self.event_shape[1]):
                 for x in range(self.event_shape[2]):
-                    logits = self.pixelcnn_net((sample*2)-1, sample=True,
-                        conditional=params)[:, :, y, x]
-                    pixel_sample = self.channel_layer(logits).sample()
-                    sample[:, :, y, x] = pixel_sample
-        if sample_shape is None and (params is None or len(self.pixelcnn_params.shape)==3):
-            return sample[0]
-        if sample_shape is not None and params is not None:
-            return torch.reshape(sample, torch.Size(sample_shape)+torch.Size([self.pixelcnn_params.shape[0]])+self.event_shape)
+                    logits = thread2(self.pixelcnn_net, (sample * 2) - 1, params, True)
+                    pixel_sample = self.channel_layer(logits[..., :, y, x]).sample()
+                    sample[..., :, y, x] = pixel_sample
         return sample
 
 

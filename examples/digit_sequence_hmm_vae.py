@@ -19,6 +19,7 @@ import pygen_models.distributions.r_independent_bernoulli as r_ind_bern
 import pygen_models.layers.made as lmade
 import pygen_models.distributions.discrete_vae as discrete_vae
 import pygen_models.train.train as pygen_models_train
+import pygen_models.utils.nn_thread as nn_thread
 
 
 class MadeHMM(nn.Module):
@@ -63,26 +64,6 @@ class Encoder(nn.Module):
         return dist
 
 
-class SeqObservationModel(nn.Module):
-    def __init__(self, seq_layer, z):
-        super().__init__()
-        self.seq_layer = seq_layer
-        self.z = z
-
-    def log_prob(self, x):
-        l1 = self.seq_layer(self.z[:, 0]).log_prob(x[:, 0])
-        l2 = self.seq_layer(self.z[:, 1]).log_prob(x[:, 1])
-        l3 = self.seq_layer(self.z[:, 2]).log_prob(x[:, 2])
-        return l1 + l2 + l3
-
-    def sample(self):
-        s1 = self.seq_layer(self.z[:, 0]).sample()
-        s2 = self.seq_layer(self.z[:, 1]).sample()
-        s3 = self.seq_layer(self.z[:, 2]).sample()
-        sample = torch.stack([s1, s2, s3], dim=1)
-        return sample
-
-
 class IndependentLatentModel(nn.Module):
     def __init__(self):
         super().__init__()
@@ -91,12 +72,14 @@ class IndependentLatentModel(nn.Module):
         observation_net = pixelcnn_model.PixelCNN(nr_resnet=1, nr_filters = 160, input_channels = 1,
             nr_params = 1, nr_conditional = 160)
         channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-        self.p_x_given_z_seq = nn.Sequential(
-            pixelcnn.SpatialExpand(num_z, 160, [28, 28]),
-            pixelcnn.PixelCNN(observation_net, [1, 28, 28], channel_layer, 160))
+        self.spatial_expand = pixelcnn.SpatialExpand(num_z, 160, [28, 28])
+        self.pixelcnn_layer = pixelcnn.PixelCNN(observation_net, [1, 28, 28], channel_layer, 160)
 
     def p_x_given_z(self, z):
-        return SeqObservationModel(self.p_x_given_z_seq, z)
+        params = nn_thread.NNThread(self.spatial_expand, 2)(z)
+        base_dist = self.pixelcnn_layer(params)
+        dist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+        return dist
 
     def p_z(self):
         return self.made_hmm
@@ -146,7 +129,6 @@ model = discrete_vae.DiscreteVAE(latent_model, encoder, 1.0)
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-#    callbacks.tb_log_image(tb_writer, "reconstructed_image_seq", reconstruct_cb(model, example_valid_images[0])),
     callbacks.tb_log_image(tb_writer, "gen_made_seq", gen_made_cb(model)),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset, batch_size=batch_size)

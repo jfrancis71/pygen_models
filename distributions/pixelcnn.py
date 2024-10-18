@@ -40,7 +40,7 @@ class PixelCNN(nn.Module):
         permute_samples = channel_last(value)
         return self.channel_layer(layer_logits).log_prob(permute_samples).sum(axis=[-1, -2])
 
-    def sample(self, sample_shape=None):
+    def sample(self, sample_shape=[]):
         with torch.no_grad():
             sample = torch.zeros(torch.Size(sample_shape) + self.batch_shape + self.event_shape)
             params = None if self.pixelcnn_params is None else self.pixelcnn_params.expand(torch.Size(sample_shape) + self.pixelcnn_params.shape)

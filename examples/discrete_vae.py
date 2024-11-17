@@ -23,14 +23,6 @@ from pygen_models.distributions.made import MadeBernoulli
 import pyro.nn
 
 
-class Floatify(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return x.float()
-
-
 class RIndependentBernoulliLayer(nn.Module):
     def __init__(self):
         super().__init__()
@@ -49,7 +41,7 @@ class IndependentLatentModel(nn.Module):
                 num_pixelcnn_params = 8
                 channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
                 net = simple_pixelcnn_net.SimplePixelCNNNet(1, channel_layer.params_size(), num_pixelcnn_params)
-                self.p_x_given_z = nn.Sequential(Floatify(),
+                self.p_x_given_z = nn.Sequential(
                     pixelcnn.SpatialExpand(ns.num_vars, num_pixelcnn_params, [28, 28]),
                     pixelcnn.PixelCNN(net, [1, 28, 28], channel_layer, num_pixelcnn_params))
             case "basic":

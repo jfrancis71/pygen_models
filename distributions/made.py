@@ -12,11 +12,11 @@ class MadeBernoulli(nn.Module):
 
     def log_prob(self, value):
         if self.made_params is None:
-            net_output = self.net(value.float())
+            net_output = self.net(value)
         else:
-            net_output = self.net(value.float(), self.made_params)
+            net_output = self.net(value, self.made_params)
         perm_net_output = net_output[:, self.net.permutation]
-        log_prob = Bernoulli(logits=perm_net_output).log_prob(value.float()).sum(axis=1)
+        log_prob = Bernoulli(logits=perm_net_output).log_prob(value).sum(axis=1)
         return log_prob
 
     def sample(self, sample_shape):
@@ -24,7 +24,7 @@ class MadeBernoulli(nn.Module):
             batch_shape = []
         else:
             batch_shape = list(self.made_params.shape[:-1])
-        sample = torch.zeros(sample_shape + batch_shape + [self.num_vars])
+        sample = torch.zeros(sample_shape + batch_shape + [self.num_vars], dtype=torch.float)
         for i in range(self.num_vars):
             if self.made_params is None:
                 net_output = self.net(sample)
@@ -33,4 +33,4 @@ class MadeBernoulli(nn.Module):
             perm_net_output = net_output[..., self.net.permutation]
             sample_value = Bernoulli(logits=perm_net_output).sample()
             sample[..., i] = sample_value[..., i]
-        return sample.long()
+        return sample

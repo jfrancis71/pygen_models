@@ -94,7 +94,7 @@ def kl_div_r_independent_bernoulli_made_hmm(p, q):
 
 def gen_made_cb(model):
     def _fn():
-        z = model.latent_model.p_z().sample(sample_shape=[10]).float()
+        z = model.latent_model.p_z().sample(sample_shape=[10])
         sample = model.latent_model.p_x_given_z(z).sample()
         grid_image = make_grid(sample.flatten(start_dim=0, end_dim=1), padding=10, nrow=3)
         return grid_image

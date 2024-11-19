@@ -9,7 +9,7 @@ $$
 $$
 
 $$
-= E_{(x,y) \sim p(x,y)}[log(\frac{p(y|x)}{p(y)})] (1)
+= E_{(x,y) \sim p(x,y)}[log(\frac{p(y|x)}{p(y)})] \hspace{20 mm}(equ \hspace{5 mm}1)
 $$
 
 Also note (see p.139 Ref 2)
@@ -67,7 +67,13 @@ $$
 $$
 
 $$
-= E_{(x,y) \sim p(x,y)}[log(q(y|x))] + H_{p(y)}[y] + E_{x \sim p(x)}[ D_{KL} [p(y|x) \parallel q(y|x))] ]
+= E_{(x,y) \sim p(x,y)}[log(q(y|x))] + H_{p(y)}[y] + E_{x \sim p(x)}[ D_{KL} [p(y|x) \parallel q(y|x))] ] \hspace{20 mm}(equ \hspace{5 mm}2)
+$$
+
+Last two terms are non negative so:
+
+$$
+I[X, Y] \ge E_{(x,y) \sim p(x,y)}[log(q(y|x))]
 $$
 
 
@@ -75,7 +81,7 @@ $$
 
 x = images, z = latent code
 
-Relabelling the last equation:
+Relabelling equ (2):
 
 $$
 = E_{(x,z) \sim p(x,z)}[log(q(x|z))] + H_{p(x)}[x] + E_{z \sim p(z)}[ D_{KL} [p(x|z) \parallel q(x|z))] ]

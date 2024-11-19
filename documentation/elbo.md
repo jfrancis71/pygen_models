@@ -18,8 +18,7 @@ E_{z \sim q(z)} [Log(p(x|z))] + E_{z \sim q(z)}[Log(\frac{p(z)}{q(z)})] + E_{z \
 $$
 
 $$
-E_{z \sim q(z)} [Log(p(x|z))] - D_{KL}[q(z)||p(z)] + D_{KL}[q(z)||p(z|x
-)]
+E_{z \sim q(z)} [Log(p(x|z))] - D_{KL}[q(z) \parallel p(z)] + D_{KL}[q(z) \parallel p(z|x)]
 $$
 
 
@@ -50,10 +49,12 @@ I[X,Z] = E_{x,z \sim p(x) q(z|x)} [log \frac{q(z|x)}{p(z)}] + E_{x,z \sim p(x) q
 $$
 
 $$
-I[X,Z] = E_{x \sim p(x)} D_{KL}[q(z|x)||p(z)] - E_{x \sim p(x)} D_{KL}[q(z)||p(z)]
+I[X,Z] = E_{x \sim p(x)} [D_{KL}[q(z|x) \parallel p(z)]] - E_{x \sim p(x)}[ D_{KL}[q(z) \parallel p(z)]]
 $$
 
-As the $D_{KL}$ is always positive the mutual information cannot be larger than this 1st $D_{KL}$ term.
+$$
+I[X,Z] \le E_{x \sim p(x)} [D_{KL}[q(z|x) \parallel p(z)]]
+$$
 
 
 # Reference:

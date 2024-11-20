@@ -22,6 +22,8 @@ $$
 H[X|Y] = \sum_{x,y} p(x,y) log(\frac{1}{p(x|y)})
 $$
 
+This is difficult because if, for example X is image and Y is latent code we would need to minimize H[X|Y] subject to the constraint the distribution over X being that of the distribution over natural images. Alternatively you could treat X as the latent code and Y as the image. But to calculate H[X] (by sampling X and Y) you would need the self information of X which would involve summing over all possible images. $log(p(x)) = log(\sum_y p(x,y)) = log(E_y[p(x|y)]) \ne E_y[log(p(x|y))]$
+
 ## Upper Bound:
 
 $$

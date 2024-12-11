@@ -21,6 +21,7 @@ import pygen_models.layers.pixelcnn as pixelcnn
 from pygen_models.neural_nets import simple_pixelcnn_net
 from pygen_models.distributions.made import MadeBernoulli
 import pyro.nn
+import pixelcnn_pp.model as pixelcnn_model
 
 
 class RIndependentBernoulliLayer(nn.Module):
@@ -41,6 +42,14 @@ class IndependentLatentModel(nn.Module):
                 num_pixelcnn_params = 8
                 channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
                 net = simple_pixelcnn_net.SimplePixelCNNNet(1, channel_layer.params_size(), num_pixelcnn_params)
+                self.p_x_given_z = nn.Sequential(
+                    pixelcnn.SpatialExpand(ns.num_vars, num_pixelcnn_params, [28, 28]),
+                    pixelcnn.PixelCNN(net, [1, 28, 28], channel_layer, num_pixelcnn_params))
+            case "pixelcnn":
+                num_pixelcnn_params = 8
+                channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+                net = pixelcnn_model.PixelCNN(nr_resnet=1, nr_filters=160,
+            input_channels=1, nr_params=channel_layer.params_size(), nr_conditional=num_pixelcnn_params)
                 self.p_x_given_z = nn.Sequential(
                     pixelcnn.SpatialExpand(ns.num_vars, num_pixelcnn_params, [28, 28]),
                     pixelcnn.PixelCNN(net, [1, 28, 28], channel_layer, num_pixelcnn_params))

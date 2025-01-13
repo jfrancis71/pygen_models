@@ -21,7 +21,7 @@ $$
 # Kullback Leibler Divergence
 
 $$
-D_{KL}[p(x) || q(x)] = E_{X \sim p(x)[log p(x) - log q(x)]
+D_{KL}[p(x) || q(x)] = E_{X \sim p(x)}[log p(x) - log q(x)]
 $$
 
 # Mutual Information

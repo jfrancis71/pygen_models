@@ -7,16 +7,19 @@ class PixelCNN(nn.Module):
     def __init__(self, pixelcnn_net, event_shape, channel_layer, num_pixelcnn_params):
         super().__init__()
         self.pixelcnn_net = pixelcnn_net
-        self.event_shape = event_shape
+        self.event_shape = torch.Size(event_shape)
         self.channel_layer = channel_layer
         self.num_pixelcnn_params = num_pixelcnn_params
 
     def forward(self, x):
         if x.shape[-3] != self.num_pixelcnn_params:
             raise RuntimeError(
-                f"input shape {x.shape}, but event_shape has shape {self.event_shape} with num_pixelcnn_params" +
-                    "{self.num_pixelcnn_params}, " +
-                "expecting [_,{self.num_pixelcnn_params, self.event_shape[1], self.event_shape[2]}]")
+                f"input shape {x.shape}, but event_shape has shape {self.event_shape} with num_pixelcnn_params " +
+                    f"{self.num_pixelcnn_params}, " +
+                f"expecting [_,{self.num_pixelcnn_params, self.event_shape[1], self.event_shape[2]}]")
+        if x.shape[-2:] != self.event_shape[-2:]:
+            raise RuntimeError(
+                f"input shape {x.shape}, but event_shape is {self.event_shape}")
         return pixelcnn_dist.PixelCNN(self.pixelcnn_net, self.event_shape, self.channel_layer, x)
 
 

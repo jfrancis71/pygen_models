@@ -17,6 +17,21 @@ import pygen_models.layers.pixelcnn as pixelcnn
 from pygen_models.neural_nets import simple_pixelcnn_net
 
 
+def demo_classify_images(cond_image_layer, images, categories):
+    """demos classifying images with generative model.
+
+       Note: in implementation here I implicitly assume uniform prior distribution.
+    """
+    def _fn():
+        log_probs = torch.stack([cond_image_layer(torch.arange(10)).log_prob(images[image_idx].unsqueeze(0). \
+            repeat([10,1,1,1])).detach() for image_idx in range(len(images))])
+        label_indices = torch.argmax(log_probs, dim=1)
+        labels = [categories[idx.to("cpu").item()] for idx in label_indices]
+        labelled_images = callbacks.make_labelled_images_grid(images, labels)
+        return labelled_images
+    return _fn
+
+
 parser = argparse.ArgumentParser(description='PyGen Conditional PixelCNN')
 parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--dataset", default="mnist")
@@ -27,6 +42,7 @@ parser.add_argument("--net", default="simple_pixelcnn_net")
 parser.add_argument("--num_resnet", default=3, type=int)
 parser.add_argument("--max_epoch", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
+parser.add_argument("--classifier", action="store_true")
 ns = parser.parse_args()
 
 num_pixelcnn_params = 16
@@ -59,6 +75,7 @@ pixelcnn_layer = pixelcnn.PixelCNN(net, event_shape, channel_layer, num_pixelcnn
 
 train_dataset, validation_dataset = random_split(dataset, data_split,
     generator=torch.Generator(device=torch.get_default_device()))
+example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=25)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)
 categorical_image_layer = nn.Sequential(
     one_hot.OneHot(10),
@@ -68,11 +85,19 @@ epoch_end_callbacks = [
     callbacks.tb_log_image(tb_writer, "conditional_generated_images",
         callbacks.demo_conditional_images(categorical_image_layer, torch.arange(10), num_samples=2)),
     callbacks.tb_epoch_log_metrics(tb_writer),
-    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)]
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
+]
+if ns.classifier:
+    epoch_end_callbacks.append(callbacks.tb_log_image(tb_writer, "classification",
+        demo_classify_images(categorical_image_layer, example_valid_images, dataset.classes)))
 if ns.images_folder is not None:
     epoch_end_callbacks.append(
         callbacks.file_log_image(ns.images_folder,"conditional_generated_images",
         callbacks.demo_conditional_images(categorical_image_layer, torch.arange(10), num_samples=2)))
+    if ns.classifier:
+        epoch_end_callbacks.append(callbacks.file_log_image(ns.images_folder, "classification",
+            demo_classify_images(categorical_image_layer, example_valid_images, dataset.classes)))
+
 train.train(
     categorical_image_layer, train_dataset, train.layer_objective(reverse_inputs=True),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),

@@ -7,14 +7,14 @@ def channel_last(x: torch.Tensor):
     return x.permute(list(range(batch_dims)) + [batch_dims+1, batch_dims+2, batch_dims])
 
 
-def thread2(net, p1, p2, sample):
+def thread2(net, p1, p2):
     batch_ndims = len(p1.shape[:-3])
     p1_flat = p1.flatten(0, batch_ndims-1)
     if p2 is None:
         p2_flat = None
     else:
         p2_flat = p2.flatten(0, batch_ndims-1)
-    out_flat = net(p1_flat, sample, conditional=p2_flat)
+    out_flat = net(p1_flat, True, conditional=p2_flat)
     out = out_flat.unflatten(0, p1.shape[:-3])
     return out
 
@@ -35,7 +35,7 @@ class PixelCNN(nn.Module):
         self.pixelcnn_net = pixelcnn_net
 
     def log_prob(self, value):
-        logits = thread2(self.pixelcnn_net, (value*2)-1, self.pixelcnn_params, False)
+        logits = thread2(self.pixelcnn_net, (value*2)-1, self.pixelcnn_params)
         layer_logits = channel_last(logits)
         permute_samples = channel_last(value)
         return self.channel_layer(layer_logits).log_prob(permute_samples).sum(axis=[-1, -2])
@@ -46,7 +46,7 @@ class PixelCNN(nn.Module):
             params = None if self.pixelcnn_params is None else self.pixelcnn_params.expand(torch.Size(sample_shape) + self.pixelcnn_params.shape)
             for y in range(self.event_shape[1]):
                 for x in range(self.event_shape[2]):
-                    logits = thread2(self.pixelcnn_net, (sample * 2) - 1, params, True)
+                    logits = thread2(self.pixelcnn_net, (sample * 2) - 1, params)
                     pixel_sample = self.channel_layer(logits[..., :, y, x]).sample()
                     sample[..., :, y, x] = pixel_sample
         return sample

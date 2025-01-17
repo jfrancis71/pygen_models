@@ -57,14 +57,11 @@ train_dataset, validation_dataset = random_split(dataset, data_split,
     generator=torch.Generator(device=torch.get_default_device()))
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = [
-    callbacks.tb_log_image(tb_writer, "conditional_generated_images",
-        callbacks.demo_conditional_images(categorical_image_layer, torch.arange(10), num_samples=2)),
     callbacks.tb_epoch_log_metrics(tb_writer),
-    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)]
-if ns.images_folder is not None:
-    epoch_end_callbacks.append(
-        callbacks.file_log_image(ns.images_folder,"conditional_generated_images",
-        callbacks.demo_conditional_images(categorical_image_layer, torch.arange(10), num_samples=2)))
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
+    callbacks.log_image_cb(callbacks.demo_conditional_images(categorical_image_layer, torch.arange(10), num_samples=2),
+        tb_writer=tb_writer, folder=ns.images_folder, name="conditional_generated_images")
+]
 train.train(
     categorical_image_layer, train_dataset, train.layer_objective(reverse_inputs=True),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),

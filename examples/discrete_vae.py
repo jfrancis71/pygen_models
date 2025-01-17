@@ -117,12 +117,11 @@ tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks_list = [
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
-    callbacks.tb_log_image(tb_writer, "reconstruct_images", tb_vae_reconstruct(digit_distribution, example_valid_images)),
-    callbacks.tb_log_image(tb_writer, "generated_images", pygen_models_callbacks.sample_images(digit_distribution))
+    callbacks.log_image_cb(pygen_models_callbacks.sample_images(digit_distribution),
+            tb_writer=tb_writer, folder=ns.images_folder, name="generated_images"),
+    callbacks.log_image_cb(tb_vae_reconstruct(digit_distribution, example_valid_images),
+            tb_writer=tb_writer, folder=ns.images_folder, name="reconstruct_images"),
 ]
-if ns.images_folder is not None:
-    epoch_end_callbacks_list.append(callbacks.file_log_image(ns.images_folder, "reconstruct_images", tb_vae_reconstruct(digit_distribution, example_valid_images)))
-    epoch_end_callbacks_list.append(callbacks.file_log_image(ns.images_folder, "generated_images", pygen_models_callbacks.sample_images(digit_distribution)))
 epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
 train.train(digit_distribution, train_dataset, pygen_models_train.vae_objective(),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),

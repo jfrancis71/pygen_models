@@ -1,7 +1,6 @@
 import argparse
 import torch
 import torch.nn as nn
-from debugpy.launcher import channel
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
@@ -82,22 +81,14 @@ categorical_image_layer = nn.Sequential(
     pixelcnn.SpatialExpand(10, num_pixelcnn_params, event_shape[1:]),
     pixelcnn_layer)
 epoch_end_callbacks = [
-    callbacks.tb_log_image(tb_writer, "conditional_generated_images",
-        callbacks.demo_conditional_images(categorical_image_layer, torch.arange(10), num_samples=2)),
     callbacks.tb_epoch_log_metrics(tb_writer),
-    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
+    callbacks.log_image_cb(callbacks.demo_conditional_images(categorical_image_layer, torch.arange(10), num_samples=2),
+            tb_writer=tb_writer, folder=ns.images_folder, name="conditional_generated_images")
 ]
 if ns.classifier:
-    epoch_end_callbacks.append(callbacks.tb_log_image(tb_writer, "classification",
-        demo_classify_images(categorical_image_layer, example_valid_images, dataset.classes)))
-if ns.images_folder is not None:
-    epoch_end_callbacks.append(
-        callbacks.file_log_image(ns.images_folder,"conditional_generated_images",
-        callbacks.demo_conditional_images(categorical_image_layer, torch.arange(10), num_samples=2)))
-    if ns.classifier:
-        epoch_end_callbacks.append(callbacks.file_log_image(ns.images_folder, "classification",
-            demo_classify_images(categorical_image_layer, example_valid_images, dataset.classes)))
-
+    epoch_end_callbacks.append(callbacks.log_image_cb(demo_classify_images(categorical_image_layer, example_valid_images, dataset.classes),
+        tb_writer=tb_writer, folder=ns.images_folder, name="classification"))
 train.train(
     categorical_image_layer, train_dataset, train.layer_objective(reverse_inputs=True),
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),

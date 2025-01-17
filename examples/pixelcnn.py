@@ -61,13 +61,10 @@ train_dataset, validation_dataset = random_split(dataset, data_split,
     generator=torch.Generator(device=torch.get_default_device()))
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = [
-    callbacks.tb_log_image(tb_writer, "generated_images", pygen_models_callbacks.sample_images(image_distribution)),
+    callbacks.log_image_cb(pygen_models_callbacks.sample_images(image_distribution),
+                           tb_writer=tb_writer, folder=ns.images_folder, name="generated_images"),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)]
-if ns.images_folder is not None:
-    epoch_end_callbacks.append(
-        callbacks.file_log_image(ns.images_folder,"train",
-            pygen_models_callbacks.sample_images(image_distribution)))
 train.train(image_distribution, train_dataset, pygen_models_train.distribution_objective,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=callbacks.callback_compose(epoch_end_callbacks), dummy_run=ns.dummy_run, max_epoch=ns.max_epoch)

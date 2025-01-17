@@ -104,6 +104,7 @@ def gen_made_cb(model):
 parser = argparse.ArgumentParser(description='PyGen MNIST Sequence HMM')
 parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
+parser.add_argument("--images_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
@@ -129,7 +130,7 @@ model = discrete_vae.DiscreteVAE(latent_model, encoder, 1.0)
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.tb_log_image(tb_writer, "gen_made_seq", gen_made_cb(model)),
+    callbacks.log_image_cb(gen_made_cb(model), tb_writer=tb_writer, folder=ns.images_folder, name="gen_made_seq"),
     callbacks.tb_epoch_log_metrics(tb_writer),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset, batch_size=batch_size)
 ])

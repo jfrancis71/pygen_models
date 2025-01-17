@@ -32,6 +32,7 @@ class Made(nn.Module):
 parser = argparse.ArgumentParser(description='PyGen MNIST Discrete VAE')
 parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
+parser.add_argument("--images_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
@@ -51,7 +52,8 @@ digit_distribution = Made()
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks_list = [
     callbacks.tb_epoch_log_metrics(tb_writer),
-    callbacks.tb_log_image(tb_writer, "generated_images", pygen_models_callbacks.sample_images(digit_distribution)),
+    callbacks.log_image_cb(pygen_models_callbacks.sample_images(digit_distribution),
+            tb_writer=tb_writer, folder=ns.images_folder, name="conditional_generated_images"),
     callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)]
 epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
 

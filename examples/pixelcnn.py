@@ -2,6 +2,7 @@ import argparse
 import torch
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import pygen.train.train as train
@@ -14,6 +15,23 @@ import pygen_models.train.train as pygen_models_train
 import pygen_models.train.callbacks as pygen_models_callbacks
 from pygen_models.neural_nets import simple_pixelcnn_net
 import pixelcnn_pp.model as pixelcnn_net_pp
+
+
+def std_entropy_cb(tb_writer, tb_name, dataset, batch_size=32):
+    def _fn(trainer_state):
+        dataloader = DataLoader(dataset, collate_fn=None,
+            generator=torch.Generator(device=torch.get_default_device()),
+            batch_size=batch_size, shuffle=True, drop_last=True)
+        dataset_iter = iter(dataloader)
+        logprob_history = []
+        for batch in dataset_iter:
+            with torch.no_grad():
+                log_prob, batch_metrics = trainer_state.batch_objective_fn(trainer_state.trainable, batch)
+            logprob_history.append(log_prob)
+        log_probs = torch.stack(logprob_history)
+        stddev = log_probs.std()
+        tb_writer.add_scalar(tb_name, stddev, trainer_state.epoch_num)
+    return _fn
 
 
 parser = argparse.ArgumentParser(description='PyGen PixelCNN')
@@ -64,7 +82,9 @@ epoch_end_callbacks = [
     callbacks.log_image_cb(pygen_models_callbacks.sample_images(image_distribution),
                            tb_writer=tb_writer, folder=ns.images_folder, name="generated_images"),
     callbacks.tb_epoch_log_metrics(tb_writer),
-    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset)]
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
+    std_entropy_cb(tb_writer, "validation_entropy_std", validation_dataset)
+]
 train.train(image_distribution, train_dataset, pygen_models_train.distribution_objective,
     batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
     epoch_end_callback=callbacks.callback_compose(epoch_end_callbacks), dummy_run=ns.dummy_run, max_epoch=ns.max_epoch)

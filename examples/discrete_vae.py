@@ -1,6 +1,4 @@
-"""Simple Discrete VAE with just one categorical variable over 10 states for training on MNIST.
-Provides analytic, uniform and reinforce methods for computing gradient on reconstruction.
-"""
+"""Simple Discrete VAE for training on MNIST."""
 
 
 import argparse
@@ -8,197 +6,123 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import random_split
-from torch.distributions.categorical import Categorical
+import torch.distributions.kl as kl_div_mod
 import torchvision
-from pygen.train import train
+from torchvision.utils import make_grid
 from pygen.train import callbacks
 from pygen.neural_nets import classifier_net
-import pygen.layers.categorical as layer_categorical
+import pygen.train.train as train
 import pygen.layers.independent_bernoulli as bernoulli_layer
-import pygen_models.layers.pixelcnn as pixelcnn_layer
-from pygen_models.neural_nets import simple_pixel_cnn_net
+import pygen_models.distributions.discrete_vae as discrete_vae
+import pygen_models.distributions.r_independent_bernoulli as r_ind_bern
+import pygen_models.train.train as pygen_models_train
+import pygen_models.train.callbacks as pygen_models_callbacks
+import pygen_models.layers.pixelcnn as pixelcnn
+from pygen_models.neural_nets import simple_pixelcnn_net
+from pygen_models.distributions.made import MadeBernoulli
+import pyro.nn
+import pixelcnn_pp.model as pixelcnn_model
 
 
-class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
-    def __init__(self, num_conditional):
-        pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(num_conditional)
-        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-        super().__init__(pixelcnn_net, [1, 28, 28], base_layer, num_conditional)
+class RIndependentBernoulliLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
 
     def forward(self, x):
-        return super().forward(x.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, 28, 28))
+        return r_ind_bern.RIndependentBernoulliDistribution(logits=x)
 
 
-class VAE(nn.Module):
-    def __init__(self, num_states):
+class IndependentLatentModel(nn.Module):
+    def __init__(self, num_vars, decoder_type):
         super().__init__()
-        self.num_states = num_states
-        self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=self.num_states)
-        self.decoder = LayerPixelCNN(self.num_states)
-        self.layer = bernoulli_layer.IndependentBernoulli(event_shape=[1, 28, 28])
+        self.num_vars = num_vars
+        self.net = pyro.nn.AutoRegressiveNN(num_vars, [num_vars*2, num_vars*2], param_dims=[1], permutation=torch.arange(num_vars))
+        match decoder_type:
+            case "simple_pixelcnn":
+                num_pixelcnn_params = 8
+                channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+                net = simple_pixelcnn_net.SimplePixelCNNNet(1, channel_layer.params_size(), num_pixelcnn_params)
+                self.p_x_given_z = nn.Sequential(
+                    pixelcnn.SpatialExpand(ns.num_vars, num_pixelcnn_params, [28, 28]),
+                    pixelcnn.PixelCNN(net, [1, 28, 28], channel_layer, num_pixelcnn_params))
+            case "pixelcnn":
+                num_pixelcnn_params = 8
+                channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+                net = pixelcnn_model.PixelCNN(nr_resnet=1, nr_filters=160,
+            input_channels=1, nr_params=channel_layer.params_size(), nr_conditional=num_pixelcnn_params)
+                self.p_x_given_z = nn.Sequential(
+                    pixelcnn.SpatialExpand(ns.num_vars, num_pixelcnn_params, [28, 28]),
+                    pixelcnn.PixelCNN(net, [1, 28, 28], channel_layer, num_pixelcnn_params))
+            case "basic":
+                self.p_x_given_z = nn.Sequential(nn.Flatten(),
+                    nn.Linear(ns.num_vars * ns.num_states, 256), nn.ReLU(),
+                    nn.Linear(256, 512), nn.ReLU(),
+                    nn.Linear(512, 784),
+                    bernoulli_layer.IndependentBernoulli([1, 28, 28]))
+            case _:
+                raise RuntimeError(f"decoder_type {ns.decoder_type} not recognised.")
 
-    def kl_div(self, encoder_dist):
-        p = Categorical(logits=torch.zeros([self.num_states], device=next(self.parameters()).device))
-        kl_div = torch.sum(encoder_dist.probs * (encoder_dist.logits - p.logits), axis=1)
-        return kl_div
-
-    def reg(self, encoder_dist):
-        reg = -torch.sum(encoder_dist.logits, axis=1)
-        return reg
-
-    def log_prob(self, x):
-        return self.elbo(x)[0]
-
-    def elbo(self, x):
-        encoder_dist = self.encoder(x)
-        log_prob = self.reconstruct_log_prob(encoder_dist, x)
-        kl_div = self.kl_div(encoder_dist)
-        reg = self.reg(encoder_dist)
-        self.loss = reg
-        return log_prob - kl_div, log_prob.detach(), kl_div.detach()
-
-    def sample(self, batch_size):
-        device = next(self.parameters()).device
-        z = torch.distributions.categorical.Categorical(probs=torch.ones([self.num_states]) / self.num_states).sample(batch_size).to(device)
-        encode = torch.nn.functional.one_hot(z, self.num_states).float()
-        decode = self.decoder(encode)
-        return decode.sample()
-
-    def forward(self, z):
-        encode = torch.nn.functional.one_hot(z, self.num_states).float().unsqueeze(0)
-        return self.decoder(encode)
+    def p_z(self):
+        p_z_dist = MadeBernoulli(self.net, self.num_vars)
+        return p_z_dist
 
 
-class VAEAnalytic(VAE):
-    def __init__(self, num_states):
-        super().__init__(num_states)
-
-    def reconstruct_log_prob(self, encoder_dist, x):
-        device = next(self.parameters()).device
-        batch_size = x.shape[0]
-        log_prob1 = torch.stack([self.decoder(
-            nn.functional.one_hot(
-                torch.tensor(z).to(device), self.num_states).unsqueeze(0).repeat(batch_size, 1).to(device).float()).log_prob(x)
-            for z in range(self.num_states)], dim=1)
-        arr = encoder_dist.probs * log_prob1
-        log_prob = torch.sum(arr, axis=1)
-        return log_prob
+@kl_div_mod.register_kl(r_ind_bern.RIndependentBernoulliDistribution, MadeBernoulli)
+def kl_div_r_independent_bernoulli_made_bernoulli(p, q):
+    sample_z = p.rsample()
+    kl_div = p.log_prob(sample_z) - q.log_prob(sample_z)
+    return kl_div
 
 
-class VAEMultiSample(VAE):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states)
-        self.num_z_samples = num_z_samples
-
-    def reconstruct_log_prob(self, q_dist, x):
-        log_probs = [self.sample_reconstruct_log_prob(q_dist, x) for _ in range(self.num_z_samples)]
-        log_prob = torch.mean(torch.stack(log_probs), dim=0)
-        return log_prob
-
-
-class VAEUniform(VAEMultiSample):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
-
-    def sample_reconstruct_log_prob(self, encoder_dist, x):
-        device = next(self.parameters()).device
-        batch_size = x.shape[0]
-        z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states]).to(device)).sample()
-        encode = torch.nn.functional.one_hot(z, self.num_states).float()
-        decode = self.decoder(encode)
-        log_prob = decode.log_prob(x)
-        importance_sample = self.num_states * encoder_dist.probs[torch.arange(encoder_dist.probs.size(0)), z] * log_prob
-        return importance_sample
-
-
-class VAEReinforce(VAEMultiSample):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
-
-    def sample_reconstruct_log_prob(self, encoder_dist, x):
-        z = encoder_dist.sample()
-        encode = torch.nn.functional.one_hot(z, self.num_states).float()
-        decode = self.decoder(encode)
-        log_prob = decode.log_prob(x)
-        log_encoder = encoder_dist.logits
-        reinforce = log_encoder[torch.arange(encoder_dist.probs.size(0)), z] * log_prob.detach()
-        return log_prob + reinforce - reinforce.detach()
-
-
-class VAETrainer(train.DistributionTrainer):
-    def __init__(self, trainable, dataset, batch_size=32, max_epoch=10, batch_end_callback=None,
-                 epoch_end_callback=None, use_scheduler=False, dummy_run=False, model_path=None):
-        super().__init__(
-            trainable, dataset, batch_size, max_epoch, batch_end_callback,
-            epoch_end_callback, use_scheduler=use_scheduler, dummy_run=dummy_run,
-            model_path=model_path)
-
-    def batch_log_prob(self, batch):
-        log_prob = self.trainable.log_prob(batch[0].to(self.device)) - \
-            self.trainable.loss/(self.epoch+1)
-        return log_prob
-
-
-class TBDatasetVAECallback:
-    def __init__(self, tb_writer, tb_name, dataset, batch_size=32):
-        self.tb_writer = tb_writer
-        self.tb_name = tb_name
-        self.batch_size = batch_size
-        self.dataset = dataset
-
-    def __call__(self, trainer):
-        dataloader = torch.utils.data.DataLoader(
-            self.dataset, collate_fn=None,
-            batch_size=self.batch_size, shuffle=True, drop_last=True)
-        log_reconstruct = 0.0
-        kl = 0.0
-        size = 0
-        for (_, batch) in enumerate(dataloader):
-            _, batch_log_reconstruct, batch_kl = trainer.trainable.elbo(batch[0].to(trainer.device))
-            log_reconstruct += batch_log_reconstruct.mean().item()
-            kl += batch_kl.mean().item()
-            size += 1
-        self.tb_writer.add_scalar(self.tb_name+"_reconstruct", log_reconstruct/size, trainer.epoch)
-        self.tb_writer.add_scalar(self.tb_name + "_kl", kl / size, trainer.epoch)
+def tb_vae_reconstruct(vae, images):
+    def _fn():
+        z = vae.q_z_given_x(images).sample()
+        reconstruct_images = vae.latent_model.p_x_given_z(z).sample()
+        imglist = torch.cat([images, reconstruct_images], dim=0)
+        grid_image = make_grid(imglist, padding=10, nrow=10)
+        return grid_image
+    return _fn
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Discrete VAE')
-parser.add_argument("--datasets_folder", default=".")
+parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
+parser.add_argument("--images_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
-parser.add_argument("--mode", default="analytic")
-parser.add_argument("--num_states", default=10, type=int)
-parser.add_argument("--num_z_samples", default=10, type=int)
+parser.add_argument("--num_vars", default=20, type=int)
+parser.add_argument("--beta", default=1.0, type=float)
 parser.add_argument("--dummy_run", action="store_true")
+parser.add_argument("--decoder_type", default="simple_pixelcnn")
 ns = parser.parse_args()
 
-transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float()])
+transform = torchvision.transforms.Compose([
+    torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
+    train.DevicePlacement()])
 mnist_dataset = torchvision.datasets.MNIST(
     ns.datasets_folder, train=True, download=False,
     transform=transform)
 train_dataset, validation_dataset = random_split(mnist_dataset, [50000, 10000])
+torch.set_default_device(ns.device)
 
-match ns.mode:
-    case "analytic":
-        digit_distribution = VAEAnalytic(ns.num_states)
-    case "uniform":
-        digit_distribution = VAEUniform(ns.num_states, ns.num_z_samples)
-    case "reinforce":
-        digit_distribution = VAEReinforce(ns.num_states, ns.num_z_samples)
-    case _:
-        raise RuntimeError("mode {} not recognised.".format(ns.mode))
+encoder = nn.Sequential(
+    classifier_net.ClassifierNet(mnist=True, num_classes=ns.num_vars),
+    RIndependentBernoulliLayer()
+    )
+latent_model = IndependentLatentModel(ns.num_vars, ns.decoder_type)
+digit_distribution = discrete_vae.DiscreteVAE(latent_model, encoder, ns.beta)
 
+example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))[0]
 tb_writer = SummaryWriter(ns.tb_folder)
-epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
-    callbacks.TBTotalLogProbCallback(tb_writer, "train_epoch_log_prob"),
-    callbacks.TBDatasetLogProbDistributionCallback(tb_writer, "validation_log_prob", validation_dataset),
-    TBDatasetVAECallback(tb_writer, "validation", validation_dataset)
-])
-
-VAETrainer(
-    digit_distribution.to(ns.device),
-    train_dataset, max_epoch=ns.max_epoch,
-    batch_end_callback=callbacks.TBBatchLogProbCallback(tb_writer, "batch_log_prob"),
-    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run).train()
+epoch_end_callbacks_list = [
+    callbacks.tb_epoch_log_metrics(tb_writer),
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset),
+    callbacks.log_image_cb(pygen_models_callbacks.sample_images(digit_distribution),
+            tb_writer=tb_writer, folder=ns.images_folder, name="generated_images"),
+    callbacks.log_image_cb(tb_vae_reconstruct(digit_distribution, example_valid_images),
+            tb_writer=tb_writer, folder=ns.images_folder, name="reconstruct_images"),
+]
+epoch_end_callbacks = callbacks.callback_compose(epoch_end_callbacks_list)
+train.train(digit_distribution, train_dataset, pygen_models_train.vae_objective(),
+    batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer),
+    epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False)

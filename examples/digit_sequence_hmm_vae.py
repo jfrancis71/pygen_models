@@ -1,266 +1,140 @@
 import argparse
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
-from torch.distributions.categorical import Categorical
+import torch.distributions.kl as kl_div_mod
 import torchvision
-import pygen.train.callbacks as callbacks
-from pygen.train import train
-import pygen_models.distributions.hmm as hmm
-import pygen.layers.independent_bernoulli as bernoulli_layer
-import pygen_models.layers.pixelcnn as pixelcnn_layer
-import pygen_models.distributions.pixelcnn as pixelcnn_dist
-import pygen_models.distributions.hmm as pygen_hmm
+from torchvision.utils import make_grid
+import pyro.nn
+import pygen.train.train as train
 from pygen.neural_nets import classifier_net
-from pygen_models.neural_nets import simple_pixel_cnn_net
+import pygen.train.callbacks as callbacks
+import pygen.layers.independent_bernoulli as bernoulli_layer
 from pygen_models.datasets import sequential_mnist
+import pixelcnn_pp.model as pixelcnn_model
+import pygen_models.layers.pixelcnn as pixelcnn
+import pygen_models.distributions.made as made
+import pygen_models.distributions.r_independent_bernoulli as r_ind_bern
+import pygen_models.layers.made as lmade
+import pygen_models.distributions.discrete_vae as discrete_vae
+import pygen_models.train.train as pygen_models_train
+import pygen_models.utils.nn_thread as nn_thread
+
+
+class MadeHMM(nn.Module):
+    def __init__(self):
+        super().__init__()
+        num_z = 128
+        made_net = pyro.nn.AutoRegressiveNN(num_z, [num_z * 2, num_z * 2], param_dims=[1],
+                                       permutation=torch.arange(num_z))
+        self.made = made.MadeBernoulli(made_net, num_z, None)
+        made_layer_net = pyro.nn.ConditionalAutoRegressiveNN(num_z, num_z, [num_z * 2, num_z * 2], param_dims=[1],
+                                                   permutation=torch.arange(num_z))
+        self.lmade = lmade.Made(made_layer_net, num_z)
+
+    def log_prob(self, z):
+        made_log = self.made.log_prob(z[:,0].detach())
+        lmade_log1 = self.lmade(z[:,0].detach()).log_prob(z[:, 1].detach())
+        lmade_log2 = self.lmade(z[:, 1].detach()).log_prob(z[:, 2].detach())
+        log = made_log + lmade_log1 + lmade_log2
+        return log
+
+    def sample(self, sample_shape=[]):
+        z1 = self.made.sample(sample_shape)
+        z2 = self.lmade(z1).sample([])
+        z3 = self.lmade(z2).sample([])
+        return torch.stack([z1, z2, z3], dim=1)
 
 
 class Encoder(nn.Module):
-    def __init__(self, num_states):
+    def __init__(self):
         super().__init__()
-        in_channels = 1
-        mid_channels = 9216
-        self.conv1 = nn.Conv2d(in_channels, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
-        self.fc1 = nn.Linear(mid_channels, 128)
-        self.fc2 = nn.Linear(128, num_states)
-
-    # pylint: disable=C0103,C0116
-    def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 2)
-        x = torch.flatten(x, 1)  # pylint: disable=E1101
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.fc2(x)
-        distribution = torch.distributions.categorical.Categorical(logits=x)
-        return distribution
-
-
-class LayerPixelCNN(pixelcnn_layer._PixelCNNDistribution):
-    def __init__(self, num_conditional):
-        pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(num_conditional)
-        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-        super().__init__(pixelcnn_net, [1, 28, 28], base_layer, num_conditional)
+        num_z = 128
+        self.encoder = classifier_net.ClassifierNet(mnist=True, num_classes=num_z)
+        self.fwd = nn.Sequential(nn.ReLU(), nn.Linear(128, 128))
+        self.bwd = nn.Sequential(nn.ReLU(), nn.Linear(128, 128))
 
     def forward(self, x):
-        return super().forward(x.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, 28, 28))
+        z_logits1 = self.bwd(self.encoder(x[:, 1]))
+        z_logits2 = self.fwd(self.encoder(x[:, 0]))
+        z_logits3 = self.fwd(self.encoder(x[:, 1]))
+        base_dist = r_ind_bern.RIndependentBernoulliDistribution(logits=torch.stack([z_logits1, z_logits2, z_logits3], dim=1))
+        dist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+        return dist
 
 
-class HMMVAE(pygen_hmm.HMM):
-    def __init__(self, num_states):
-        observation_model = LayerPixelCNN(ns.num_states)
-        super().__init__(num_states, observation_model)
-        self.q = Encoder(num_states)
+class IndependentLatentModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        num_z = 128
+        self.made_hmm = MadeHMM()
+        observation_net = pixelcnn_model.PixelCNN(nr_resnet=1, nr_filters = 160, input_channels = 1,
+            nr_params = 1, nr_conditional = 160)
+        channel_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
+        self.spatial_expand = pixelcnn.SpatialExpand(num_z, 160, [28, 28])
+        self.pixelcnn_layer = pixelcnn.PixelCNN(observation_net, [1, 28, 28], channel_layer, 160)
 
-    def log_prob(self, x):
-        return self.elbo(x)
+    def p_x_given_z(self, z):
+        params = nn_thread.NNThread(self.spatial_expand, 2)(z)
+        base_dist = self.pixelcnn_layer(params)
+        dist = torch.distributions.independent.Independent(base_distribution=base_dist, reinterpreted_batch_ndims=1)
+        return dist
 
-    def elbo(self, x):
-        q_dist = torch.zeros([x.shape[0], x.shape[1], self.num_states], device=self.device())
-        for t in range(x.shape[1]):
-            q_dist[:, t] = self.q(x[:, t]).logits
-        log_prob = self.reconstruct_log_prob(q_dist, x)
-        kl_div = self.kl_div(q_dist)
-        return log_prob - kl_div
-
-    def kl_div(self, q_dist):
-        kl_div = self.kl_div_cat(Categorical(logits=q_dist[:, 0]), self.prior_state_distribution())
-        for t in range(1, q_dist.shape[1]):
-            for s in range(self.num_states):
-                kl_div += torch.exp(q_dist[:, t - 1, s]) * self.kl_div_cat(Categorical(logits=q_dist[:, t]), Categorical(logits=self.state_transition_distribution().logits[s]))
-        return kl_div
-
-    def kl_div_cat(self, p, q):
-        kl_div = torch.sum(p.probs * (p.logits - q.logits), axis=1)
-        return kl_div
+    def p_z(self):
+        return self.made_hmm
 
 
-class HMMAnalytic(HMMVAE):
-    def __init__(self, num_states):
-        super().__init__(num_states)
-
-    def reconstruct_log_prob(self, q_dist, x):
-        """encoder_dist is tensor of shape [B, T, N], x has shape [B, T, C, Y, X]"""
-        log_prob = torch.zeros([x.shape[0]], device=self.device())
-        for t in range(x.shape[1]):
-            for s in range(self.num_states):
-                one_hot = torch.nn.functional.one_hot(torch.tensor(s).to(self.device()), self.num_states).float()
-                log_prob += torch.exp(q_dist[:, t, s]) * self.observation_model(one_hot).log_prob(x[:, t])
-        return log_prob
+@kl_div_mod.register_kl(torch.distributions.independent.Independent, MadeHMM)
+def kl_div_r_independent_bernoulli_made_hmm(p, q):
+    sample_z = p.sample()
+    kl_div = p.log_prob(sample_z).detach() - q.log_prob(sample_z)
+    return kl_div
 
 
-class HMMMultiSample(HMMVAE):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states)
-        self.num_z_samples = num_z_samples
-
-    def reconstruct_log_prob(self, q_dist, x):
-        log_probs = [self.sample_reconstruct_log_prob(q_dist, x) for _ in range(self.num_z_samples)]
-        log_prob = torch.mean(torch.stack(log_probs), dim=0)
-        return log_prob
-
-
-class HMMUniform(HMMMultiSample):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
-
-    def sample_reconstruct_log_prob(self, q_dist, x):  # Using uniform sampling
-        batch_size = q_dist.shape[0]
-        log_prob = torch.zeros([x.shape[0]], device=self.device())
-        for t in range(x.shape[1]):
-            z = torch.distributions.categorical.Categorical(logits=torch.zeros([batch_size, self.num_states]).to(self.device())).sample()
-            one_hot = torch.nn.functional.one_hot(z, self.num_states).float()
-            q_probs = torch.exp(q_dist[:,t])[torch.arange(batch_size), z]
-            log_prob_t = self.observation_model(one_hot).log_prob(x[:, t])
-            log_prob += self.num_states * q_probs * log_prob_t
-        return log_prob
-
-
-class HMMReinforce(HMMMultiSample):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
-
-    def sample_reconstruct_log_prob(self, q_dist, x):
-        batch_size = q_dist.shape[0]
-        log_prob = torch.zeros([x.shape[0]], device=self.device())
-        for t in range(x.shape[1]):
-            z = torch.distributions.categorical.Categorical(logits=q_dist[:,t]).sample()
-            one_hot = torch.nn.functional.one_hot(z, self.num_states).float()
-            q_logits = q_dist[:,t][torch.arange(batch_size), z]
-            log_prob_t = self.observation_model(one_hot).log_prob(x[:, t])
-            reinforce = log_prob_t.detach() * q_logits
-            log_prob += log_prob_t + reinforce - reinforce.detach()
-        return log_prob
-
-
-class HMMReinforceBaseline(HMMMultiSample):
-    def __init__(self, num_states, num_z_samples):
-        super().__init__(num_states, num_z_samples)
-        self.baseline_pixelcnn_net = simple_pixel_cnn_net.SimplePixelCNNNetwork(self.num_states)
-        self.base_layer = bernoulli_layer.IndependentBernoulli(event_shape=[1])
-        self.baseline_dist = pixelcnn_dist._PixelCNN(
-            self.baseline_pixelcnn_net,
-            [1, 28, 28],
-            self.base_layer, None
-        )
-
-    def reconstruct_log_prob(self, q_dist, x):
-        baseline_log_prob = torch.zeros([x.shape[0], x.shape[1]], device=self.device())
-        for t in range(x.shape[1]):
-            baseline_log_prob[:, t] = self.baseline_dist.log_prob(x[:, t])
-        log_probs = [self.sample_reconstruct_log_prob(q_dist, x, baseline_log_prob) for _ in range(self.num_z_samples)]
-        log_prob = torch.mean(torch.stack(log_probs), dim=0)
-        sum_baseline_log_prob = torch.sum(baseline_log_prob, axis=1)
-        return log_prob + sum_baseline_log_prob - sum_baseline_log_prob.detach()
-
-    def sample_reconstruct_log_prob(self, q_dist, x, baseline_log_prob):
-        batch_size = q_dist.shape[0]
-        log_prob = torch.zeros([x.shape[0]], device=self.device())
-        for t in range(x.shape[1]):
-            z = torch.distributions.categorical.Categorical(logits=q_dist[:,t]).sample()
-            one_hot = torch.nn.functional.one_hot(z, self.num_states).float()
-            q_logits = q_dist[:,t][torch.arange(batch_size), z]
-            log_prob_t = self.observation_model(one_hot).log_prob(x[:, t])
-            reinforce = (log_prob_t - baseline_log_prob[:, t]).detach() * q_logits
-            log_prob += log_prob_t + reinforce - reinforce.detach()
-        return log_prob
-
-
-class HMMTrainer(train.DistributionTrainer):
-    # pylint: disable=R0913
-    def __init__(self, trainable, dataset, batch_size=32, max_epoch=10, batch_end_callback=None,
-                 epoch_end_callback=None, use_scheduler=False, dummy_run=False, model_path=None):
-        super().__init__(
-            trainable, dataset, batch_size, max_epoch, batch_end_callback,
-            epoch_end_callback, use_scheduler=use_scheduler, dummy_run=dummy_run,
-            model_path=model_path)
-
-    def kl_div(self, observation):  # x is B*Event_shape, ie just one element of sequence
-        pz_given_x = self.trainable.q(observation)
-        pz = Categorical(logits=pz_given_x.logits*0.0)
-        kl_div = self.trainable.kl_div_cat(pz, pz_given_x)
-        return kl_div
-
-    def batch_log_prob(self, batch):
-        log_prob = self.trainable.log_prob(batch[0].to(self.device)) - \
-            self.kl_div(batch[0][:, 0].to(self.device))/(self.epoch+1)
-        return log_prob
-
-
-class TBSequenceImageCallback:
-    # pylint: disable=R0903
-    def __init__(self, tb_writer, tb_name):
-        self.tb_writer = tb_writer
-        self.tb_name = tb_name
-
-    def __call__(self, trainer):
-        sample_size = 8
-        num_steps = 3
-        imglist = [trainer.trainable.sample(num_steps=num_steps) for _ in range(sample_size)]
-        imglist = torch.clip(torch.cat(imglist, axis=0), 0.0, 1.0)  # pylint: disable=E1101
-        grid_image = torchvision.utils.make_grid(imglist, padding=10, nrow=num_steps)
-        self.tb_writer.add_image(self.tb_name, grid_image, trainer.epoch)
-
-
-class TBSequenceTransitionMatrixCallback:
-    # pylint: disable=R0903
-    def __init__(self, tb_writer, tb_name):
-        self.tb_writer = tb_writer
-        self.tb_name = tb_name
-
-    def __call__(self, trainer):
-        image = trainer.trainable.state_transition_distribution().probs.detach().unsqueeze(0).cpu().numpy()
-        self.tb_writer.add_image(self.tb_name, image, trainer.epoch)
+def gen_made_cb(model):
+    def _fn():
+        z = model.latent_model.p_z().sample(sample_shape=[10])
+        sample = model.latent_model.p_x_given_z(z).sample()
+        grid_image = make_grid(sample.flatten(start_dim=0, end_dim=1), padding=10, nrow=3)
+        return grid_image
+    return _fn
 
 
 parser = argparse.ArgumentParser(description='PyGen MNIST Sequence HMM')
-parser.add_argument("--datasets_folder", default=".")
+parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
+parser.add_argument("--images_folder", default=None)
 parser.add_argument("--device", default="cpu")
 parser.add_argument("--max_epoch", default=10, type=int)
-parser.add_argument("--mode", default="cpu")
-parser.add_argument("--num_states", default=10, type=int)
-parser.add_argument("--num_z_samples", default=10, type=int)
 parser.add_argument("--dummy_run", action="store_true")
 ns = parser.parse_args()
 
-transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float()])
+torch.set_default_device(ns.device)
+
+seq_len = 3
+batch_size = 16
+transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), lambda x: (x > 0.5).float(),
+    train.DevicePlacement()])
 mnist_dataset = torchvision.datasets.MNIST(
     ns.datasets_folder, train=True, download=False,
     transform=transform)
-train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000])
-train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, ns.dummy_run)
-validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, ns.dummy_run)
+train_mnist_dataset, validation_mnist_dataset = random_split(mnist_dataset, [55000, 5000],
+    generator=torch.Generator(device=torch.get_default_device()))
+train_dataset = sequential_mnist.SequentialMNISTDataset(train_mnist_dataset, seq_len, ns.dummy_run)
+validation_dataset = sequential_mnist.SequentialMNISTDataset(validation_mnist_dataset, seq_len, ns.dummy_run)
 
-match ns.mode:
-    case "analytic":
-        mnist_hmm = HMMAnalytic(ns.num_states)
-    case "uniform":
-        mnist_hmm = HMMUniform(ns.num_states, ns.num_z_samples)
-    case "reinforce":
-        mnist_hmm = HMMReinforce(ns.num_states, ns.num_z_samples)
-    case "reinforce_baseline":
-        mnist_hmm = HMMReinforceBaseline(ns.num_states, ns.num_z_samples)
-    case _:
-        raise RuntimeError("mode {} not recognised.".format(ns.mode))
-
+latent_model = IndependentLatentModel()
+encoder = Encoder()
+model = discrete_vae.DiscreteVAE(latent_model, encoder, 1.0)
+example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=10)))
 tb_writer = SummaryWriter(ns.tb_folder)
 epoch_end_callbacks = callbacks.callback_compose([
-    callbacks.TBConditionalImagesCallback(tb_writer, "z_conditioned_images", num_labels=ns.num_states),
-    callbacks.TBDatasetLogProbDistributionCallback(tb_writer, "validation_log_prob", validation_dataset),
-    TBSequenceImageCallback(tb_writer, tb_name="image_sequence"),
-    TBSequenceTransitionMatrixCallback(tb_writer, tb_name="state_transition"),
+    callbacks.log_image_cb(gen_made_cb(model), tb_writer=tb_writer, folder=ns.images_folder, name="gen_made_seq"),
+    callbacks.tb_epoch_log_metrics(tb_writer),
+    callbacks.tb_dataset_metrics_logging(tb_writer, "validation", validation_dataset, batch_size=batch_size)
 ])
-trainer = HMMTrainer(
-    mnist_hmm.to(ns.device),
-    train_dataset, max_epoch=ns.max_epoch, epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run)
-torch.autograd.set_detect_anomaly(True)
-trainer.train()
+if __name__ == "__main__":
+    train.train(model, train_dataset, pygen_models_train.vae_objective(),
+        batch_end_callback=callbacks.tb_batch_log_metrics(tb_writer), model_path="./model.pth",
+        epoch_end_callback=epoch_end_callbacks, dummy_run=ns.dummy_run, max_epoch=ns.max_epoch, epoch_regularizer=False, batch_size=batch_size)

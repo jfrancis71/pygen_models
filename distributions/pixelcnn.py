@@ -1,79 +1,56 @@
 import torch
 from torch import nn
-import pixelcnn_pp.model as pixelcnn_model
-import pygen.layers.independent_bernoulli as bernoulli_layer
-import pygen.layers.independent_quantized_distribution as ql
 
 
-class _PixelCNN(nn.Module):
-    def __init__(self, pixelcnn_net, event_shape, layer, params):
+def channel_last(x: torch.Tensor):
+    batch_dims = len(x.shape)-3
+    return x.permute(list(range(batch_dims)) + [batch_dims+1, batch_dims+2, batch_dims])
+
+
+def thread2(net, p1, p2):
+    batch_ndims = len(p1.shape[:-3])
+    p1_flat = p1.flatten(0, batch_ndims-1)
+    if p2 is None:
+        p2_flat = None
+    else:
+        p2_flat = p2.flatten(0, batch_ndims-1)
+    out_flat = net(p1_flat, True, conditional=p2_flat)
+    out = out_flat.unflatten(0, p1.shape[:-3])
+    return out
+
+
+class PixelCNN(nn.Module):
+    def __init__(self, pixelcnn_net, event_shape, channel_layer, pixelcnn_params):
         super().__init__()
-        self.event_shape = event_shape
-        self.layer = layer
-        if params is None or len(params.shape)==3:
-            self.batch_shape = []
+        if len(event_shape) != 3:
+            raise RuntimeError(f"event_shape should be list of 3 elements, but given {event_shape}")
+        self.event_shape = torch.Size(event_shape)
+        self.channel_layer = channel_layer
+        if pixelcnn_params is None or len(pixelcnn_params.shape) == 3:
+            self.batch_shape = torch.Size([])
         else:
-            self.batch_shape = params.shape[0]
-        self.params = params
+            self.batch_shape = torch.Size(pixelcnn_params.shape[:-3])
+        self.pixelcnn_params = pixelcnn_params
+        self.output_channels = self.channel_layer.params_size()
         self.pixelcnn_net = pixelcnn_net
 
-    def log_prob(self, samples):
-        # pylint: disable=E1101
-        if samples.size()[1:4] != torch.Size(self.event_shape):
-            raise RuntimeError("sample shape {}, but event_shape has shape {}"
-                .format(samples.shape[1:4], self.event_shape))
-        params = self.params
-        if params is not None:
-            if len(params.shape) == 3:
-                params = params.unsqueeze(0).repeat(samples.shape[0], 1, 1, 1)
-        logits = self.pixelcnn_net((samples*2.0)-1.0, conditional=params)
-        layer_logits = logits.permute(0, 2, 3, 1)  # B, Y, X, P where P for parameters
-        permute_samples = samples.permute(0, 2, 3, 1)  # B, Y, X, C
-        return self.layer(layer_logits).log_prob(permute_samples).sum(axis=[1, 2])
+    def log_prob(self, value):
+        logits = thread2(self.pixelcnn_net, (value*2)-1, self.pixelcnn_params)
+        layer_logits = channel_last(logits)
+        permute_samples = channel_last(value)
+        return self.channel_layer(layer_logits).log_prob(permute_samples).sum(axis=[-1, -2])
 
-    def sample(self, sample_shape=None):
-        if sample_shape is None:
-            batch_shape = [1]
-        else:
-            batch_shape = sample_shape
+    def sample(self, sample_shape=[]):
         with torch.no_grad():
-            params = self.params
-            if params is not None:
-                if len(params.shape) == 3:
-                    params = params.unsqueeze(0).repeat(batch_shape[0], 1, 1, 1)
-            # pylint: disable=E1101
-            sample = torch.zeros(batch_shape+self.event_shape,
-                device=next(self.parameters()).device)
+            sample = torch.zeros(torch.Size(sample_shape) + self.batch_shape + self.event_shape)
+            params = None if self.pixelcnn_params is None else self.pixelcnn_params.expand(torch.Size(sample_shape) + self.pixelcnn_params.shape)
             for y in range(self.event_shape[1]):
                 for x in range(self.event_shape[2]):
-                    logits = self.pixelcnn_net((sample*2)-1, sample=True,
-                        conditional=params)[:, :, y, x]
-                    pixel_sample = self.layer(logits).sample()
-                    sample[:, :, y, x] = pixel_sample
-        if sample_shape is None:
-            return sample[0]
+                    logits = thread2(self.pixelcnn_net, (sample * 2) - 1, params)
+                    pixel_sample = self.channel_layer(logits[..., :, y, x]).sample()
+                    sample[..., :, y, x] = pixel_sample
         return sample
 
 
-class PixelCNNBernoulliDistribution(_PixelCNN):
-    def __init__(self, event_shape, nr_resnet=3):
-        base_layer = bernoulli_layer.IndependentBernoulli(event_shape=event_shape[:1])
-        super().__init__(
-            pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                input_channels=event_shape[0],
-                nr_params=base_layer.params_size(), nr_conditional=None),
-            event_shape,
-            base_layer,
-            None)
-
-
-class PixelCNNQuantizedDistribution(_PixelCNN):
-    def __init__(self, event_shape, nr_resnet=3):
-        base_layer = ql.IndependentQuantizedDistribution(event_shape=event_shape[:1])
-        super().__init__(
-            pixelcnn_model.PixelCNN(nr_resnet=nr_resnet, nr_filters=160,
-                input_channels=self.event_shape[0],
-                nr_params=self.layer.params_size(), nr_conditional=None),
-            event_shape,
-            base_layer,
-            None)
+import doctest
+doctest.testmod()

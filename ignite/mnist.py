@@ -9,7 +9,7 @@ from torch.utils.data import random_split
 import torchvision.datasets as datasets
 from torchvision.transforms import Compose, Normalize, ToTensor
 from ignite.engine import Events
-from ignite.metrics import Accuracy, Loss
+from ignite.metrics import RunningAverage
 from ignite.utils import setup_logger
 from ignite.engine import Events, Engine
 from pygen.train import callbacks
@@ -63,6 +63,12 @@ def train_step(engine, batch):
     loss.backward()
     optimizer.step()
 
+def evaluate_function(engine, batch):
+    x, y = batch
+    loss = -mymodel.log_prob(x)
+    return loss
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--datasets_folder", default="~/datasets")
 parser.add_argument("--tb_folder", default=None)
@@ -78,16 +84,22 @@ train_dataset, validation_dataset = random_split(dataset, data_split)
 train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
 val_loader = DataLoader(validation_dataset, batch_size=32, shuffle=False)
 optimizer = Adam(mymodel.parameters(), lr=.001)
-criterion = nn.CrossEntropyLoss()
 
 trainer = Engine(train_step)
 trainer.logger = setup_logger("trainer")
 example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset, batch_size=25)))[0].to(args.device)
 tb_writer = SummaryWriter(args.tb_folder)
+evaluator = Engine(evaluate_function)
+evaluator.logger = setup_logger("evaluator")
+metric = RunningAverage(output_transform=lambda x: x.item())
+metric.attach(evaluator, "log_prob")
 
 @trainer.on(Events.EPOCH_COMPLETED)
 def log_results(engine):
     if tb_writer is not None:
+        evaluator.run(val_loader)
+        metrics = evaluator.state.metrics
+        tb_writer.add_scalar("validation/log_prob", metrics["log_prob"], engine.state.epoch)
         images = mymodel.sample(example_valid_images)
         images = torch.cat([example_valid_images, images], dim=0)
         image = make_grid(images, nrow=25, padding=10)

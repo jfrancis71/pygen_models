@@ -3,17 +3,15 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.optim import Adam
-from torch.utils.data import DataLoader
+from torch.utils.data import random_split, DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import random_split
 import torchvision.datasets as datasets
 from torchvision.transforms import Compose, Normalize, ToTensor
-from ignite.engine import Events
+from torchvision.utils import make_grid
+from ignite.engine import Engine, Events
 from ignite.metrics import RunningAverage
 from ignite.utils import setup_logger
-from ignite.engine import Events, Engine
 from pygen.train import callbacks
-from torchvision.utils import make_grid
 
 
 # https://github.com/hugobb/discreteVAE was useful for a working discrete VAE
@@ -44,10 +42,10 @@ class Model(nn.Module):
         recon_logits = self.decode(z)
         dist = torch.distributions.Bernoulli(logits=recon_logits)
         log_prob_recon = dist.log_prob(x)
-        log_prob_z = log_prob_z.sum(-1)
+        log_prob_z = log_prob_z.mean(-1)
         reinforce_loss = log_prob_recon.sum(axis=[1,2,3]).detach() * log_prob_z
         recons_log_prob = log_prob_recon.sum(axis=[1,2,3])
-        return recons_log_prob.sum(-1) + reinforce_loss.sum(-1) - reinforce_loss.detach().sum(-1)
+        return recons_log_prob.mean(-1) + reinforce_loss.mean(-1) - reinforce_loss.detach().mean(-1)
 
     def sample(self, x):
         latent = torch.distributions.Bernoulli(logits=self.encode(x)).sample()
@@ -59,13 +57,13 @@ class Model(nn.Module):
 def train_step(engine, batch):
     x, y = batch
     optimizer.zero_grad()
-    loss = -mymodel.log_prob(x)
+    loss = -mymodel.log_prob(x.to(args.device))
     loss.backward()
     optimizer.step()
 
 def evaluate_function(engine, batch):
     x, y = batch
-    loss = -mymodel.log_prob(x)
+    loss = -mymodel.log_prob(x.to(args.device))
     return loss
 
 
@@ -77,6 +75,7 @@ parser.add_argument("--max_epoch", type=int, default=10, help="number of epochs 
 args = parser.parse_args()
 
 mymodel = Model()
+mymodel.to(args.device)
 transform = Compose([ToTensor(), lambda x: (x > 0.5).float()])
 dataset = datasets.MNIST(args.datasets_folder, train=True, download=True, transform=transform)
 data_split = [55000, 5000]

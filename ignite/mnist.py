@@ -45,7 +45,7 @@ class Model(nn.Module):
         log_prob_z = log_prob_z.mean(-1)
         reinforce_loss = log_prob_recon.sum(axis=[1,2,3]).detach() * log_prob_z
         recons_log_prob = log_prob_recon.sum(axis=[1,2,3])
-        return recons_log_prob.mean(-1) + reinforce_loss.mean(-1) - reinforce_loss.detach().mean(-1)
+        return recons_log_prob.mean(-1) + reinforce_loss.mean(-1) - reinforce_loss.detach().mean(-1), z_dist.entropy().mean(axis=1).mean(-1)
 
     def sample(self, x):
         latent = torch.distributions.Bernoulli(logits=self.encode(x)).sample()
@@ -57,14 +57,14 @@ class Model(nn.Module):
 def train_step(engine, batch):
     x, y = batch
     optimizer.zero_grad()
-    loss = -mymodel.log_prob(x.to(args.device))
+    loss = -mymodel.log_prob(x.to(args.device))[0]
     loss.backward()
     optimizer.step()
 
 def evaluate_function(engine, batch):
     x, y = batch
-    loss = -mymodel.log_prob(x.to(args.device))
-    return loss
+    log_prob, z_entropy = mymodel.log_prob(x.to(args.device))
+    return -log_prob, z_entropy
 
 
 parser = argparse.ArgumentParser()
@@ -90,8 +90,11 @@ example_valid_images = next(iter(torch.utils.data.DataLoader(validation_dataset,
 tb_writer = SummaryWriter(args.tb_folder)
 evaluator = Engine(evaluate_function)
 evaluator.logger = setup_logger("evaluator")
-metric = RunningAverage(output_transform=lambda x: x.item())
+metric = RunningAverage(output_transform=lambda x: x[0].item())
 metric.attach(evaluator, "log_prob")
+metric = RunningAverage(output_transform=lambda x: x[1].item())
+metric.attach(evaluator, "z_entropy")
+
 
 @trainer.on(Events.EPOCH_COMPLETED)
 def log_results(engine):
@@ -99,6 +102,7 @@ def log_results(engine):
         evaluator.run(val_loader)
         metrics = evaluator.state.metrics
         tb_writer.add_scalar("validation/log_prob", metrics["log_prob"], engine.state.epoch)
+        tb_writer.add_scalar("validation/z_entropy", metrics["z_entropy"], engine.state.epoch)
         images = mymodel.sample(example_valid_images)
         images = torch.cat([example_valid_images, images], dim=0)
         image = make_grid(images, nrow=25, padding=10)
